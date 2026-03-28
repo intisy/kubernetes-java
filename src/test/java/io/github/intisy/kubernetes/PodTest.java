@@ -3,6 +3,7 @@ package io.github.intisy.kubernetes;
 import io.github.intisy.kubernetes.exception.NotFoundException;
 import io.github.intisy.kubernetes.model.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,9 +15,11 @@ import java.util.Map;
 /**
  * Integration tests for Kubernetes operations via KubernetesProvider.
  * Tests pod, deployment, service, configmap, secret, namespace, and node operations.
+ * Requires a working Docker + Minikube environment.
  *
  * @author Finn Birich
  */
+@Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class PodTest {
 

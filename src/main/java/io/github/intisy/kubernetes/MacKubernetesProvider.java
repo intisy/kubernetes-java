@@ -3,9 +3,11 @@ package io.github.intisy.kubernetes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
@@ -141,8 +143,26 @@ public class MacKubernetesProvider extends KubernetesProvider {
         );
         pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
         pb.redirectErrorStream(true);
-        pb.inheritIO();
         Process process = pb.start();
+
+        // Drain process output in background to prevent blocking and log progress
+        final Process minikubeProcess = process;
+        Thread outputDrainer = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(minikubeProcess.getInputStream()));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.info("[minikube] {}", line);
+                    }
+                } catch (IOException e) {
+                    // Process ended or stream closed
+                }
+            }
+        });
+        outputDrainer.setDaemon(true);
+        outputDrainer.start();
 
         boolean completed = process.waitFor(20, TimeUnit.MINUTES);
         if (!completed) {

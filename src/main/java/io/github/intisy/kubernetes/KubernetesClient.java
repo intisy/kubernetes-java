@@ -1,12 +1,33 @@
 package io.github.intisy.kubernetes;
 
+import io.github.intisy.kubernetes.command.clusterrole.*;
+import io.github.intisy.kubernetes.command.clusterrolebinding.*;
 import io.github.intisy.kubernetes.command.configmap.*;
+import io.github.intisy.kubernetes.command.cronjob.*;
+import io.github.intisy.kubernetes.command.daemonset.*;
 import io.github.intisy.kubernetes.command.deployment.*;
+import io.github.intisy.kubernetes.command.endpoints.*;
+import io.github.intisy.kubernetes.command.event.*;
+import io.github.intisy.kubernetes.command.hpa.*;
+import io.github.intisy.kubernetes.command.ingress.*;
+import io.github.intisy.kubernetes.command.job.*;
+import io.github.intisy.kubernetes.command.limitrange.*;
 import io.github.intisy.kubernetes.command.namespace.*;
+import io.github.intisy.kubernetes.command.networkpolicy.*;
 import io.github.intisy.kubernetes.command.node.*;
+import io.github.intisy.kubernetes.command.pdb.*;
 import io.github.intisy.kubernetes.command.pod.*;
+import io.github.intisy.kubernetes.command.pv.*;
+import io.github.intisy.kubernetes.command.pvc.*;
+import io.github.intisy.kubernetes.command.replicaset.*;
+import io.github.intisy.kubernetes.command.resourcequota.*;
+import io.github.intisy.kubernetes.command.role.*;
+import io.github.intisy.kubernetes.command.rolebinding.*;
 import io.github.intisy.kubernetes.command.secret.*;
 import io.github.intisy.kubernetes.command.service.*;
+import io.github.intisy.kubernetes.command.serviceaccount.*;
+import io.github.intisy.kubernetes.command.statefulset.*;
+import io.github.intisy.kubernetes.command.storageclass.*;
 import io.github.intisy.kubernetes.command.system.*;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
@@ -141,6 +162,10 @@ public class KubernetesClient implements Closeable {
         return new DeleteNamespaceCmd(httpClient, namespaceName);
     }
 
+    public GetNamespaceCmd getNamespace(String namespaceName) {
+        return new GetNamespaceCmd(httpClient, namespaceName);
+    }
+
     // ==================== Node Commands ====================
 
     public ListNodesCmd listNodes() {
@@ -189,6 +214,328 @@ public class KubernetesClient implements Closeable {
 
     public DeleteSecretCmd deleteSecret(String secretName) {
         return new DeleteSecretCmd(httpClient, secretName);
+    }
+
+    public GetSecretCmd getSecret(String secretName) {
+        return new GetSecretCmd(httpClient, secretName);
+    }
+
+    // ==================== Job Commands ====================
+
+    public ListJobsCmd listJobs() {
+        return new ListJobsCmd(httpClient);
+    }
+
+    public CreateJobCmd createJob(Job job) {
+        return new CreateJobCmd(httpClient, job);
+    }
+
+    public DeleteJobCmd deleteJob(String jobName) {
+        return new DeleteJobCmd(httpClient, jobName);
+    }
+
+    public GetJobCmd getJob(String jobName) {
+        return new GetJobCmd(httpClient, jobName);
+    }
+
+    // ==================== CronJob Commands ====================
+
+    public ListCronJobsCmd listCronJobs() {
+        return new ListCronJobsCmd(httpClient);
+    }
+
+    public CreateCronJobCmd createCronJob(CronJob cronJob) {
+        return new CreateCronJobCmd(httpClient, cronJob);
+    }
+
+    public DeleteCronJobCmd deleteCronJob(String cronJobName) {
+        return new DeleteCronJobCmd(httpClient, cronJobName);
+    }
+
+    public GetCronJobCmd getCronJob(String cronJobName) {
+        return new GetCronJobCmd(httpClient, cronJobName);
+    }
+
+    // ==================== StatefulSet Commands ====================
+
+    public ListStatefulSetsCmd listStatefulSets() {
+        return new ListStatefulSetsCmd(httpClient);
+    }
+
+    public CreateStatefulSetCmd createStatefulSet(StatefulSet statefulSet) {
+        return new CreateStatefulSetCmd(httpClient, statefulSet);
+    }
+
+    public DeleteStatefulSetCmd deleteStatefulSet(String statefulSetName) {
+        return new DeleteStatefulSetCmd(httpClient, statefulSetName);
+    }
+
+    public GetStatefulSetCmd getStatefulSet(String statefulSetName) {
+        return new GetStatefulSetCmd(httpClient, statefulSetName);
+    }
+
+    public ScaleStatefulSetCmd scaleStatefulSet(String statefulSetName) {
+        return new ScaleStatefulSetCmd(httpClient, statefulSetName);
+    }
+
+    // ==================== DaemonSet Commands ====================
+
+    public ListDaemonSetsCmd listDaemonSets() {
+        return new ListDaemonSetsCmd(httpClient);
+    }
+
+    public CreateDaemonSetCmd createDaemonSet(DaemonSet daemonSet) {
+        return new CreateDaemonSetCmd(httpClient, daemonSet);
+    }
+
+    public DeleteDaemonSetCmd deleteDaemonSet(String daemonSetName) {
+        return new DeleteDaemonSetCmd(httpClient, daemonSetName);
+    }
+
+    public GetDaemonSetCmd getDaemonSet(String daemonSetName) {
+        return new GetDaemonSetCmd(httpClient, daemonSetName);
+    }
+
+    // ==================== ReplicaSet Commands ====================
+
+    public ListReplicaSetsCmd listReplicaSets() {
+        return new ListReplicaSetsCmd(httpClient);
+    }
+
+    public GetReplicaSetCmd getReplicaSet(String replicaSetName) {
+        return new GetReplicaSetCmd(httpClient, replicaSetName);
+    }
+
+    // ==================== Ingress Commands ====================
+
+    public ListIngressesCmd listIngresses() {
+        return new ListIngressesCmd(httpClient);
+    }
+
+    public CreateIngressCmd createIngress(Ingress ingress) {
+        return new CreateIngressCmd(httpClient, ingress);
+    }
+
+    public DeleteIngressCmd deleteIngress(String ingressName) {
+        return new DeleteIngressCmd(httpClient, ingressName);
+    }
+
+    public GetIngressCmd getIngress(String ingressName) {
+        return new GetIngressCmd(httpClient, ingressName);
+    }
+
+    // ==================== NetworkPolicy Commands ====================
+
+    public ListNetworkPoliciesCmd listNetworkPolicies() {
+        return new ListNetworkPoliciesCmd(httpClient);
+    }
+
+    public CreateNetworkPolicyCmd createNetworkPolicy(NetworkPolicy networkPolicy) {
+        return new CreateNetworkPolicyCmd(httpClient, networkPolicy);
+    }
+
+    public DeleteNetworkPolicyCmd deleteNetworkPolicy(String networkPolicyName) {
+        return new DeleteNetworkPolicyCmd(httpClient, networkPolicyName);
+    }
+
+    public GetNetworkPolicyCmd getNetworkPolicy(String networkPolicyName) {
+        return new GetNetworkPolicyCmd(httpClient, networkPolicyName);
+    }
+
+    // ==================== PersistentVolumeClaim Commands ====================
+
+    public ListPersistentVolumeClaimsCmd listPersistentVolumeClaims() {
+        return new ListPersistentVolumeClaimsCmd(httpClient);
+    }
+
+    public CreatePersistentVolumeClaimCmd createPersistentVolumeClaim(PersistentVolumeClaim pvc) {
+        return new CreatePersistentVolumeClaimCmd(httpClient, pvc);
+    }
+
+    public DeletePersistentVolumeClaimCmd deletePersistentVolumeClaim(String pvcName) {
+        return new DeletePersistentVolumeClaimCmd(httpClient, pvcName);
+    }
+
+    public GetPersistentVolumeClaimCmd getPersistentVolumeClaim(String pvcName) {
+        return new GetPersistentVolumeClaimCmd(httpClient, pvcName);
+    }
+
+    // ==================== PersistentVolume Commands ====================
+
+    public ListPersistentVolumesCmd listPersistentVolumes() {
+        return new ListPersistentVolumesCmd(httpClient);
+    }
+
+    public CreatePersistentVolumeCmd createPersistentVolume(PersistentVolume pv) {
+        return new CreatePersistentVolumeCmd(httpClient, pv);
+    }
+
+    public DeletePersistentVolumeCmd deletePersistentVolume(String pvName) {
+        return new DeletePersistentVolumeCmd(httpClient, pvName);
+    }
+
+    public GetPersistentVolumeCmd getPersistentVolume(String pvName) {
+        return new GetPersistentVolumeCmd(httpClient, pvName);
+    }
+
+    // ==================== ServiceAccount Commands ====================
+
+    public ListServiceAccountsCmd listServiceAccounts() {
+        return new ListServiceAccountsCmd(httpClient);
+    }
+
+    public CreateServiceAccountCmd createServiceAccount(ServiceAccount serviceAccount) {
+        return new CreateServiceAccountCmd(httpClient, serviceAccount);
+    }
+
+    public DeleteServiceAccountCmd deleteServiceAccount(String serviceAccountName) {
+        return new DeleteServiceAccountCmd(httpClient, serviceAccountName);
+    }
+
+    public GetServiceAccountCmd getServiceAccount(String serviceAccountName) {
+        return new GetServiceAccountCmd(httpClient, serviceAccountName);
+    }
+
+    // ==================== Endpoints Commands ====================
+
+    public ListEndpointsCmd listEndpoints() {
+        return new ListEndpointsCmd(httpClient);
+    }
+
+    public GetEndpointsCmd getEndpoints(String endpointsName) {
+        return new GetEndpointsCmd(httpClient, endpointsName);
+    }
+
+    // ==================== Event Commands ====================
+
+    public ListEventsCmd listEvents() {
+        return new ListEventsCmd(httpClient);
+    }
+
+    // ==================== HorizontalPodAutoscaler Commands ====================
+
+    public ListHorizontalPodAutoscalersCmd listHorizontalPodAutoscalers() {
+        return new ListHorizontalPodAutoscalersCmd(httpClient);
+    }
+
+    public CreateHorizontalPodAutoscalerCmd createHorizontalPodAutoscaler(HorizontalPodAutoscaler hpa) {
+        return new CreateHorizontalPodAutoscalerCmd(httpClient, hpa);
+    }
+
+    public DeleteHorizontalPodAutoscalerCmd deleteHorizontalPodAutoscaler(String hpaName) {
+        return new DeleteHorizontalPodAutoscalerCmd(httpClient, hpaName);
+    }
+
+    public GetHorizontalPodAutoscalerCmd getHorizontalPodAutoscaler(String hpaName) {
+        return new GetHorizontalPodAutoscalerCmd(httpClient, hpaName);
+    }
+
+    // ==================== Role Commands ====================
+
+    public ListRolesCmd listRoles() {
+        return new ListRolesCmd(httpClient);
+    }
+
+    public CreateRoleCmd createRole(Role role) {
+        return new CreateRoleCmd(httpClient, role);
+    }
+
+    public DeleteRoleCmd deleteRole(String roleName) {
+        return new DeleteRoleCmd(httpClient, roleName);
+    }
+
+    // ==================== ClusterRole Commands ====================
+
+    public ListClusterRolesCmd listClusterRoles() {
+        return new ListClusterRolesCmd(httpClient);
+    }
+
+    public CreateClusterRoleCmd createClusterRole(ClusterRole clusterRole) {
+        return new CreateClusterRoleCmd(httpClient, clusterRole);
+    }
+
+    public DeleteClusterRoleCmd deleteClusterRole(String clusterRoleName) {
+        return new DeleteClusterRoleCmd(httpClient, clusterRoleName);
+    }
+
+    // ==================== RoleBinding Commands ====================
+
+    public ListRoleBindingsCmd listRoleBindings() {
+        return new ListRoleBindingsCmd(httpClient);
+    }
+
+    public CreateRoleBindingCmd createRoleBinding(RoleBinding roleBinding) {
+        return new CreateRoleBindingCmd(httpClient, roleBinding);
+    }
+
+    public DeleteRoleBindingCmd deleteRoleBinding(String roleBindingName) {
+        return new DeleteRoleBindingCmd(httpClient, roleBindingName);
+    }
+
+    // ==================== ClusterRoleBinding Commands ====================
+
+    public ListClusterRoleBindingsCmd listClusterRoleBindings() {
+        return new ListClusterRoleBindingsCmd(httpClient);
+    }
+
+    public CreateClusterRoleBindingCmd createClusterRoleBinding(ClusterRoleBinding clusterRoleBinding) {
+        return new CreateClusterRoleBindingCmd(httpClient, clusterRoleBinding);
+    }
+
+    public DeleteClusterRoleBindingCmd deleteClusterRoleBinding(String clusterRoleBindingName) {
+        return new DeleteClusterRoleBindingCmd(httpClient, clusterRoleBindingName);
+    }
+
+    // ==================== ResourceQuota Commands ====================
+
+    public ListResourceQuotasCmd listResourceQuotas() {
+        return new ListResourceQuotasCmd(httpClient);
+    }
+
+    public CreateResourceQuotaCmd createResourceQuota(ResourceQuota resourceQuota) {
+        return new CreateResourceQuotaCmd(httpClient, resourceQuota);
+    }
+
+    public DeleteResourceQuotaCmd deleteResourceQuota(String resourceQuotaName) {
+        return new DeleteResourceQuotaCmd(httpClient, resourceQuotaName);
+    }
+
+    // ==================== LimitRange Commands ====================
+
+    public ListLimitRangesCmd listLimitRanges() {
+        return new ListLimitRangesCmd(httpClient);
+    }
+
+    public CreateLimitRangeCmd createLimitRange(LimitRange limitRange) {
+        return new CreateLimitRangeCmd(httpClient, limitRange);
+    }
+
+    public DeleteLimitRangeCmd deleteLimitRange(String limitRangeName) {
+        return new DeleteLimitRangeCmd(httpClient, limitRangeName);
+    }
+
+    // ==================== StorageClass Commands ====================
+
+    public ListStorageClassesCmd listStorageClasses() {
+        return new ListStorageClassesCmd(httpClient);
+    }
+
+    public GetStorageClassCmd getStorageClass(String storageClassName) {
+        return new GetStorageClassCmd(httpClient, storageClassName);
+    }
+
+    // ==================== PodDisruptionBudget Commands ====================
+
+    public ListPodDisruptionBudgetsCmd listPodDisruptionBudgets() {
+        return new ListPodDisruptionBudgetsCmd(httpClient);
+    }
+
+    public CreatePodDisruptionBudgetCmd createPodDisruptionBudget(PodDisruptionBudget pdb) {
+        return new CreatePodDisruptionBudgetCmd(httpClient, pdb);
+    }
+
+    public DeletePodDisruptionBudgetCmd deletePodDisruptionBudget(String pdbName) {
+        return new DeletePodDisruptionBudgetCmd(httpClient, pdbName);
     }
 
     // ==================== System Commands ====================

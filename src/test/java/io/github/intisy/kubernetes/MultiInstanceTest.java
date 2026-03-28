@@ -3,6 +3,7 @@ package io.github.intisy.kubernetes;
 import io.github.intisy.kubernetes.model.ObjectMeta;
 import io.github.intisy.kubernetes.model.Pod;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,9 +14,11 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Tests for multiple KubernetesProvider instances running simultaneously.
+ * Requires a working Docker + Minikube environment.
  *
  * @author Finn Birich
  */
+@Tag("integration")
 public class MultiInstanceTest {
 
     private static final Logger log = LoggerFactory.getLogger(MultiInstanceTest.class);
