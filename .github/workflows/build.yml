@@ -32,12 +32,12 @@ jobs:
       
       - name: Run unit tests
         if: matrix.test-type == 'unit'
-        run: ./gradlew test --tests "io.github.intisy.kubernetes.PodTest" --info
+        run: ./gradlew test --tests "io.github.intisy.kubernetes.ModelTest" --tests "io.github.intisy.kubernetes.KubernetesClientBuilderTest" --info
         shell: bash
       
       - name: Run tests (Linux - integration)
         if: matrix.test-type == 'integration'
-        run: ./gradlew test --tests "io.github.intisy.kubernetes.PodTest" --info
+        run: ./gradlew test --tests "io.github.intisy.kubernetes.ModelTest" --tests "io.github.intisy.kubernetes.KubernetesClientBuilderTest" --info
         shell: bash
 
   build:
