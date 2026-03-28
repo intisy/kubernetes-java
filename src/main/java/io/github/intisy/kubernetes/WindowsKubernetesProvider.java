@@ -140,7 +140,7 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
                 "--driver", driver,
                 "--cpus", "2",
                 "--memory", "2048",
-                "--wait", "all",
+                "--wait", "apiserver",
                 "--interactive=false"
         );
         pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
@@ -151,10 +151,10 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
         pb.inheritIO();
         Process process = pb.start();
 
-        boolean completed = process.waitFor(10, TimeUnit.MINUTES);
+        boolean completed = process.waitFor(20, TimeUnit.MINUTES);
         if (!completed) {
             process.destroyForcibly();
-            throw new RuntimeException("Minikube start timed out after 10 minutes");
+            throw new RuntimeException("Minikube start timed out after 20 minutes");
         }
 
         if (process.exitValue() != 0) {
