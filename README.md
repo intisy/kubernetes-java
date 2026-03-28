@@ -18,7 +18,7 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
   <dependency>
       <groupId>io.github.intisy</groupId>
       <artifactId>kubernetes-java</artifactId>
-      <version>1.0</version>
+      <version>1.0.1</version>
   </dependency>
 ```
 
@@ -45,7 +45,7 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
       }
   }
   dependencies {
-      implementation 'io.github.intisy:kubernetes-java:1.0'
+      implementation 'io.github.intisy:kubernetes-java:1.0.1'
   }
 ```
 
@@ -57,7 +57,7 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
       id "io.github.intisy.github-gradle" version "1.3.7"
   }
   dependencies {
-      githubImplementation "intisy:kubernetes-java:1.0"
+      githubImplementation "intisy:kubernetes-java:1.0.1"
   }
 ```
 
