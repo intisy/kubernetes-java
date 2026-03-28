@@ -4,6 +4,7 @@ import io.github.intisy.kubernetes.model.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -89,7 +90,6 @@ public class ModelTest {
     public void testPodStatus() {
         Pod pod = new Pod();
         assertNull(pod.getStatus());
-        // PodStatus has no setters, usually populated by Gson
     }
 
     @Test
@@ -307,7 +307,6 @@ public class ModelTest {
     @Test
     @DisplayName("ObjectMeta: OwnerReference")
     public void testOwnerReference() {
-        // OwnerReference has no setters in the model, usually populated by Gson
         ObjectMeta.OwnerReference ref = new ObjectMeta.OwnerReference();
         assertNull(ref.getApiVersion());
         assertNull(ref.getKind());
@@ -315,5 +314,498 @@ public class ModelTest {
         assertNull(ref.getUid());
         assertNull(ref.getController());
         assertNull(ref.getBlockOwnerDeletion());
+    }
+
+    // ==================== New Model Tests ====================
+
+    @Test
+    @DisplayName("Job: default values and spec")
+    public void testJob() {
+        Job job = new Job();
+        assertEquals("batch/v1", job.getApiVersion());
+        assertEquals("Job", job.getKind());
+        assertNull(job.getMetadata());
+        assertNull(job.getSpec());
+        assertNull(job.getStatus());
+
+        Job.JobSpec spec = new Job.JobSpec()
+                .setParallelism(2)
+                .setCompletions(5)
+                .setBackoffLimit(3)
+                .setActiveDeadlineSeconds(600L)
+                .setTtlSecondsAfterFinished(120);
+
+        job.setSpec(spec);
+        job.setMetadata(new ObjectMeta().setName("my-job"));
+
+        assertEquals(2, job.getSpec().getParallelism());
+        assertEquals(5, job.getSpec().getCompletions());
+        assertEquals(3, job.getSpec().getBackoffLimit());
+        assertEquals(600L, job.getSpec().getActiveDeadlineSeconds());
+        assertEquals(120, job.getSpec().getTtlSecondsAfterFinished());
+        assertTrue(job.toString().contains("Job"));
+    }
+
+    @Test
+    @DisplayName("CronJob: default values and spec")
+    public void testCronJob() {
+        CronJob cronJob = new CronJob();
+        assertEquals("batch/v1", cronJob.getApiVersion());
+        assertEquals("CronJob", cronJob.getKind());
+        assertNull(cronJob.getMetadata());
+        assertNull(cronJob.getSpec());
+        assertNull(cronJob.getStatus());
+
+        CronJob.CronJobSpec spec = new CronJob.CronJobSpec()
+                .setSchedule("*/5 * * * *")
+                .setConcurrencyPolicy("Forbid")
+                .setSuspend(false)
+                .setSuccessfulJobsHistoryLimit(3)
+                .setFailedJobsHistoryLimit(1)
+                .setStartingDeadlineSeconds(100L);
+
+        cronJob.setSpec(spec);
+        cronJob.setMetadata(new ObjectMeta().setName("my-cronjob"));
+
+        assertEquals("*/5 * * * *", cronJob.getSpec().getSchedule());
+        assertEquals("Forbid", cronJob.getSpec().getConcurrencyPolicy());
+        assertFalse(cronJob.getSpec().getSuspend());
+        assertEquals(3, cronJob.getSpec().getSuccessfulJobsHistoryLimit());
+        assertEquals(1, cronJob.getSpec().getFailedJobsHistoryLimit());
+        assertEquals(100L, cronJob.getSpec().getStartingDeadlineSeconds());
+        assertTrue(cronJob.toString().contains("CronJob"));
+    }
+
+    @Test
+    @DisplayName("StatefulSet: default values and spec")
+    public void testStatefulSet() {
+        StatefulSet ss = new StatefulSet();
+        assertEquals("apps/v1", ss.getApiVersion());
+        assertEquals("StatefulSet", ss.getKind());
+        assertNull(ss.getMetadata());
+        assertNull(ss.getSpec());
+        assertNull(ss.getStatus());
+
+        StatefulSet.StatefulSetSpec spec = new StatefulSet.StatefulSetSpec()
+                .setReplicas(3)
+                .setServiceName("my-service")
+                .setPodManagementPolicy("OrderedReady")
+                .setRevisionHistoryLimit(10);
+
+        ss.setSpec(spec);
+        ss.setMetadata(new ObjectMeta().setName("my-statefulset"));
+
+        assertEquals(3, ss.getSpec().getReplicas());
+        assertEquals("my-service", ss.getSpec().getServiceName());
+        assertEquals("OrderedReady", ss.getSpec().getPodManagementPolicy());
+        assertEquals(10, ss.getSpec().getRevisionHistoryLimit());
+        assertTrue(ss.toString().contains("StatefulSet"));
+    }
+
+    @Test
+    @DisplayName("StatefulSet: update strategy")
+    public void testStatefulSetUpdateStrategy() {
+        StatefulSet.RollingUpdateStatefulSetStrategy rolling =
+                new StatefulSet.RollingUpdateStatefulSetStrategy().setPartition(2);
+
+        StatefulSet.UpdateStrategy strategy = new StatefulSet.UpdateStrategy()
+                .setType("RollingUpdate")
+                .setRollingUpdate(rolling);
+
+        assertEquals("RollingUpdate", strategy.getType());
+        assertEquals(2, strategy.getRollingUpdate().getPartition());
+    }
+
+    @Test
+    @DisplayName("DaemonSet: default values and spec")
+    public void testDaemonSet() {
+        DaemonSet ds = new DaemonSet();
+        assertEquals("apps/v1", ds.getApiVersion());
+        assertEquals("DaemonSet", ds.getKind());
+        assertNull(ds.getMetadata());
+        assertNull(ds.getSpec());
+        assertNull(ds.getStatus());
+
+        DaemonSet.DaemonSetSpec spec = new DaemonSet.DaemonSetSpec()
+                .setMinReadySeconds(10)
+                .setRevisionHistoryLimit(5);
+
+        ds.setSpec(spec);
+        ds.setMetadata(new ObjectMeta().setName("my-daemonset"));
+
+        assertEquals(10, ds.getSpec().getMinReadySeconds());
+        assertEquals(5, ds.getSpec().getRevisionHistoryLimit());
+        assertTrue(ds.toString().contains("DaemonSet"));
+    }
+
+    @Test
+    @DisplayName("ReplicaSet: default values")
+    public void testReplicaSet() {
+        ReplicaSet rs = new ReplicaSet();
+        assertEquals("apps/v1", rs.getApiVersion());
+        assertEquals("ReplicaSet", rs.getKind());
+        assertNull(rs.getMetadata());
+        rs.setMetadata(new ObjectMeta().setName("my-replicaset"));
+        assertEquals("my-replicaset", rs.getMetadata().getName());
+        assertTrue(rs.toString().contains("ReplicaSet"));
+    }
+
+    @Test
+    @DisplayName("Ingress: default values and spec")
+    public void testIngress() {
+        Ingress ingress = new Ingress();
+        assertEquals("networking.k8s.io/v1", ingress.getApiVersion());
+        assertEquals("Ingress", ingress.getKind());
+        assertNull(ingress.getMetadata());
+        assertNull(ingress.getSpec());
+        assertNull(ingress.getStatus());
+
+        Ingress.IngressSpec spec = new Ingress.IngressSpec()
+                .setIngressClassName("nginx")
+                .addRule(new Ingress.IngressRule()
+                        .setHost("example.com")
+                        .setHttp(new Ingress.HTTPIngressRuleValue()
+                                .addPath(new Ingress.HTTPIngressPath()
+                                        .setPath("/")
+                                        .setPathType("Prefix")
+                                        .setBackend(new Ingress.IngressBackend()
+                                                .setService(new Ingress.IngressServiceBackend()
+                                                        .setName("my-svc")
+                                                        .setPort(new Ingress.ServiceBackendPort().setNumber(80))
+                                                )
+                                        )
+                                )
+                        )
+                );
+
+        ingress.setSpec(spec);
+        ingress.setMetadata(new ObjectMeta().setName("my-ingress"));
+
+        assertEquals("nginx", ingress.getSpec().getIngressClassName());
+        assertEquals(1, ingress.getSpec().getRules().size());
+        assertEquals("example.com", ingress.getSpec().getRules().get(0).getHost());
+        assertEquals("/", ingress.getSpec().getRules().get(0).getHttp().getPaths().get(0).getPath());
+        assertEquals("Prefix", ingress.getSpec().getRules().get(0).getHttp().getPaths().get(0).getPathType());
+        assertEquals("my-svc", ingress.getSpec().getRules().get(0).getHttp().getPaths().get(0).getBackend().getService().getName());
+        assertEquals(80, ingress.getSpec().getRules().get(0).getHttp().getPaths().get(0).getBackend().getService().getPort().getNumber());
+        assertTrue(ingress.toString().contains("rulesCount=1"));
+    }
+
+    @Test
+    @DisplayName("NetworkPolicy: default values and spec")
+    public void testNetworkPolicy() {
+        NetworkPolicy np = new NetworkPolicy();
+        assertEquals("networking.k8s.io/v1", np.getApiVersion());
+        assertEquals("NetworkPolicy", np.getKind());
+        assertNull(np.getMetadata());
+        assertNull(np.getSpec());
+
+        NetworkPolicy.NetworkPolicySpec spec = new NetworkPolicy.NetworkPolicySpec()
+                .setPodSelector(new Deployment.LabelSelector().addMatchLabel("app", "web"))
+                .setPolicyTypes(Arrays.asList("Ingress", "Egress"));
+
+        np.setSpec(spec);
+        np.setMetadata(new ObjectMeta().setName("my-netpol"));
+
+        assertEquals("web", np.getSpec().getPodSelector().getMatchLabels().get("app"));
+        assertEquals(2, np.getSpec().getPolicyTypes().size());
+        assertTrue(np.toString().contains("NetworkPolicy"));
+    }
+
+    @Test
+    @DisplayName("PersistentVolumeClaim: default values and spec")
+    public void testPersistentVolumeClaim() {
+        PersistentVolumeClaim pvc = new PersistentVolumeClaim();
+        assertEquals("v1", pvc.getApiVersion());
+        assertEquals("PersistentVolumeClaim", pvc.getKind());
+        assertNull(pvc.getMetadata());
+        assertNull(pvc.getSpec());
+        assertNull(pvc.getStatus());
+
+        PersistentVolumeClaim.PVCSpec spec = new PersistentVolumeClaim.PVCSpec()
+                .setAccessModes(Collections.singletonList("ReadWriteOnce"))
+                .setStorageClassName("standard")
+                .setVolumeName("my-vol")
+                .setVolumeMode("Filesystem");
+
+        PersistentVolumeClaim.ResourceRequirements resources = new PersistentVolumeClaim.ResourceRequirements()
+                .setRequests(Collections.singletonMap("storage", "10Gi"));
+        spec.setResources(resources);
+
+        pvc.setSpec(spec);
+        pvc.setMetadata(new ObjectMeta().setName("my-pvc"));
+
+        assertEquals(1, pvc.getSpec().getAccessModes().size());
+        assertEquals("ReadWriteOnce", pvc.getSpec().getAccessModes().get(0));
+        assertEquals("standard", pvc.getSpec().getStorageClassName());
+        assertEquals("my-vol", pvc.getSpec().getVolumeName());
+        assertEquals("Filesystem", pvc.getSpec().getVolumeMode());
+        assertEquals("10Gi", pvc.getSpec().getResources().getRequests().get("storage"));
+        assertTrue(pvc.toString().contains("PersistentVolumeClaim"));
+    }
+
+    @Test
+    @DisplayName("PersistentVolume: default values")
+    public void testPersistentVolume() {
+        PersistentVolume pv = new PersistentVolume();
+        assertEquals("v1", pv.getApiVersion());
+        assertEquals("PersistentVolume", pv.getKind());
+        assertNull(pv.getMetadata());
+        pv.setMetadata(new ObjectMeta().setName("my-pv"));
+        assertEquals("my-pv", pv.getMetadata().getName());
+        assertTrue(pv.toString().contains("PersistentVolume"));
+    }
+
+    @Test
+    @DisplayName("ServiceAccount: default values")
+    public void testServiceAccount() {
+        ServiceAccount sa = new ServiceAccount();
+        assertEquals("v1", sa.getApiVersion());
+        assertEquals("ServiceAccount", sa.getKind());
+        assertNull(sa.getMetadata());
+        sa.setMetadata(new ObjectMeta().setName("my-sa"));
+        assertEquals("my-sa", sa.getMetadata().getName());
+        assertTrue(sa.toString().contains("ServiceAccount"));
+    }
+
+    @Test
+    @DisplayName("Endpoints: default values")
+    public void testEndpoints() {
+        Endpoints ep = new Endpoints();
+        assertEquals("v1", ep.getApiVersion());
+        assertEquals("Endpoints", ep.getKind());
+        assertNull(ep.getMetadata());
+        ep.setMetadata(new ObjectMeta().setName("my-ep"));
+        assertEquals("my-ep", ep.getMetadata().getName());
+        assertTrue(ep.toString().contains("Endpoints"));
+    }
+
+    @Test
+    @DisplayName("HorizontalPodAutoscaler: default values and spec")
+    public void testHorizontalPodAutoscaler() {
+        HorizontalPodAutoscaler hpa = new HorizontalPodAutoscaler();
+        assertEquals("autoscaling/v1", hpa.getApiVersion());
+        assertEquals("HorizontalPodAutoscaler", hpa.getKind());
+        assertNull(hpa.getMetadata());
+        assertNull(hpa.getSpec());
+        assertNull(hpa.getStatus());
+
+        HorizontalPodAutoscaler.CrossVersionObjectReference ref =
+                new HorizontalPodAutoscaler.CrossVersionObjectReference()
+                        .setApiVersion("apps/v1")
+                        .setKind("Deployment")
+                        .setName("my-deploy");
+
+        HorizontalPodAutoscaler.HPASpec spec = new HorizontalPodAutoscaler.HPASpec()
+                .setScaleTargetRef(ref)
+                .setMinReplicas(1)
+                .setMaxReplicas(10)
+                .setTargetCPUUtilizationPercentage(80);
+
+        hpa.setSpec(spec);
+        hpa.setMetadata(new ObjectMeta().setName("my-hpa"));
+
+        assertEquals("apps/v1", hpa.getSpec().getScaleTargetRef().getApiVersion());
+        assertEquals("Deployment", hpa.getSpec().getScaleTargetRef().getKind());
+        assertEquals("my-deploy", hpa.getSpec().getScaleTargetRef().getName());
+        assertEquals(1, hpa.getSpec().getMinReplicas());
+        assertEquals(10, hpa.getSpec().getMaxReplicas());
+        assertEquals(80, hpa.getSpec().getTargetCPUUtilizationPercentage());
+        assertTrue(hpa.toString().contains("minReplicas=1"));
+        assertTrue(hpa.toString().contains("maxReplicas=10"));
+    }
+
+    @Test
+    @DisplayName("Role: default values and rules")
+    public void testRole() {
+        Role role = new Role();
+        assertEquals("rbac.authorization.k8s.io/v1", role.getApiVersion());
+        assertEquals("Role", role.getKind());
+        assertNull(role.getMetadata());
+        assertNull(role.getRules());
+
+        Role.PolicyRule rule = new Role.PolicyRule()
+                .setApiGroups(Collections.singletonList(""))
+                .setResources(Arrays.asList("pods", "services"))
+                .setVerbs(Arrays.asList("get", "list", "watch"));
+
+        role.addRule(rule);
+        role.setMetadata(new ObjectMeta().setName("my-role"));
+
+        assertEquals(1, role.getRules().size());
+        assertEquals(2, role.getRules().get(0).getResources().size());
+        assertEquals(3, role.getRules().get(0).getVerbs().size());
+        assertTrue(role.toString().contains("rulesCount=1"));
+    }
+
+    @Test
+    @DisplayName("ClusterRole: default values")
+    public void testClusterRole() {
+        ClusterRole cr = new ClusterRole();
+        assertEquals("rbac.authorization.k8s.io/v1", cr.getApiVersion());
+        assertEquals("ClusterRole", cr.getKind());
+        assertNull(cr.getMetadata());
+        cr.setMetadata(new ObjectMeta().setName("my-clusterrole"));
+        assertEquals("my-clusterrole", cr.getMetadata().getName());
+        assertTrue(cr.toString().contains("ClusterRole"));
+    }
+
+    @Test
+    @DisplayName("RoleBinding: default values and subjects")
+    public void testRoleBinding() {
+        RoleBinding rb = new RoleBinding();
+        assertEquals("rbac.authorization.k8s.io/v1", rb.getApiVersion());
+        assertEquals("RoleBinding", rb.getKind());
+        assertNull(rb.getMetadata());
+        assertNull(rb.getSubjects());
+        assertNull(rb.getRoleRef());
+
+        RoleBinding.Subject subject = new RoleBinding.Subject()
+                .setKind("User")
+                .setName("jane")
+                .setApiGroup("rbac.authorization.k8s.io");
+
+        RoleBinding.RoleRef roleRef = new RoleBinding.RoleRef()
+                .setApiGroup("rbac.authorization.k8s.io")
+                .setKind("Role")
+                .setName("pod-reader");
+
+        rb.addSubject(subject);
+        rb.setRoleRef(roleRef);
+        rb.setMetadata(new ObjectMeta().setName("my-rolebinding"));
+
+        assertEquals(1, rb.getSubjects().size());
+        assertEquals("User", rb.getSubjects().get(0).getKind());
+        assertEquals("jane", rb.getSubjects().get(0).getName());
+        assertEquals("pod-reader", rb.getRoleRef().getName());
+        assertTrue(rb.toString().contains("RoleBinding"));
+    }
+
+    @Test
+    @DisplayName("ClusterRoleBinding: default values")
+    public void testClusterRoleBinding() {
+        ClusterRoleBinding crb = new ClusterRoleBinding();
+        assertEquals("rbac.authorization.k8s.io/v1", crb.getApiVersion());
+        assertEquals("ClusterRoleBinding", crb.getKind());
+        assertNull(crb.getMetadata());
+        assertNull(crb.getSubjects());
+        assertNull(crb.getRoleRef());
+
+        RoleBinding.Subject subject = new RoleBinding.Subject()
+                .setKind("ServiceAccount")
+                .setName("default")
+                .setNamespace("kube-system");
+
+        RoleBinding.RoleRef roleRef = new RoleBinding.RoleRef()
+                .setApiGroup("rbac.authorization.k8s.io")
+                .setKind("ClusterRole")
+                .setName("cluster-admin");
+
+        crb.addSubject(subject);
+        crb.setRoleRef(roleRef);
+        crb.setMetadata(new ObjectMeta().setName("my-crb"));
+
+        assertEquals(1, crb.getSubjects().size());
+        assertEquals("ServiceAccount", crb.getSubjects().get(0).getKind());
+        assertEquals("cluster-admin", crb.getRoleRef().getName());
+        assertTrue(crb.toString().contains("ClusterRoleBinding"));
+    }
+
+    @Test
+    @DisplayName("ResourceQuota: default values")
+    public void testResourceQuota() {
+        ResourceQuota rq = new ResourceQuota();
+        assertEquals("v1", rq.getApiVersion());
+        assertEquals("ResourceQuota", rq.getKind());
+        assertNull(rq.getMetadata());
+        rq.setMetadata(new ObjectMeta().setName("my-quota"));
+        assertEquals("my-quota", rq.getMetadata().getName());
+        assertTrue(rq.toString().contains("ResourceQuota"));
+    }
+
+    @Test
+    @DisplayName("LimitRange: default values")
+    public void testLimitRange() {
+        LimitRange lr = new LimitRange();
+        assertEquals("v1", lr.getApiVersion());
+        assertEquals("LimitRange", lr.getKind());
+        assertNull(lr.getMetadata());
+        lr.setMetadata(new ObjectMeta().setName("my-limitrange"));
+        assertEquals("my-limitrange", lr.getMetadata().getName());
+        assertTrue(lr.toString().contains("LimitRange"));
+    }
+
+    @Test
+    @DisplayName("StorageClass: default values and fields")
+    public void testStorageClass() {
+        StorageClass sc = new StorageClass();
+        assertEquals("storage.k8s.io/v1", sc.getApiVersion());
+        assertEquals("StorageClass", sc.getKind());
+        assertNull(sc.getMetadata());
+        assertNull(sc.getProvisioner());
+
+        sc.setProvisioner("kubernetes.io/aws-ebs")
+                .setReclaimPolicy("Delete")
+                .setVolumeBindingMode("WaitForFirstConsumer")
+                .setAllowVolumeExpansion(true)
+                .setParameters(Collections.singletonMap("type", "gp2"))
+                .setMountOptions(Arrays.asList("debug", "discard"));
+
+        sc.setMetadata(new ObjectMeta().setName("my-sc"));
+
+        assertEquals("kubernetes.io/aws-ebs", sc.getProvisioner());
+        assertEquals("Delete", sc.getReclaimPolicy());
+        assertEquals("WaitForFirstConsumer", sc.getVolumeBindingMode());
+        assertTrue(sc.getAllowVolumeExpansion());
+        assertEquals("gp2", sc.getParameters().get("type"));
+        assertEquals(2, sc.getMountOptions().size());
+        assertTrue(sc.toString().contains("kubernetes.io/aws-ebs"));
+    }
+
+    @Test
+    @DisplayName("PodDisruptionBudget: default values and spec")
+    public void testPodDisruptionBudget() {
+        PodDisruptionBudget pdb = new PodDisruptionBudget();
+        assertEquals("policy/v1", pdb.getApiVersion());
+        assertEquals("PodDisruptionBudget", pdb.getKind());
+        assertNull(pdb.getMetadata());
+        assertNull(pdb.getSpec());
+        assertNull(pdb.getStatus());
+
+        PodDisruptionBudget.PDBSpec spec = new PodDisruptionBudget.PDBSpec()
+                .setMinAvailable(1)
+                .setMaxUnavailable("50%")
+                .setSelector(new Deployment.LabelSelector().addMatchLabel("app", "web"));
+
+        pdb.setSpec(spec);
+        pdb.setMetadata(new ObjectMeta().setName("my-pdb"));
+
+        assertEquals(1, pdb.getSpec().getMinAvailable());
+        assertEquals("50%", pdb.getSpec().getMaxUnavailable());
+        assertEquals("web", pdb.getSpec().getSelector().getMatchLabels().get("app"));
+        assertTrue(pdb.toString().contains("PodDisruptionBudget"));
+    }
+
+    @Test
+    @DisplayName("Event: default values")
+    public void testEvent() {
+        Event event = new Event();
+        assertEquals("v1", event.getApiVersion());
+        assertEquals("Event", event.getKind());
+        assertNull(event.getMetadata());
+        assertNull(event.getReason());
+        assertNull(event.getMessage());
+        assertNull(event.getType());
+        assertNull(event.getInvolvedObject());
+        assertNull(event.getSource());
+        assertNull(event.getFirstTimestamp());
+        assertNull(event.getLastTimestamp());
+        assertNull(event.getCount());
+        assertNull(event.getAction());
+        assertNull(event.getReportingComponent());
+
+        event.setMetadata(new ObjectMeta().setName("my-event"));
+        assertEquals("my-event", event.getMetadata().getName());
+        assertTrue(event.toString().contains("Event"));
     }
 }

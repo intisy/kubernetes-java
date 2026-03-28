@@ -148,8 +148,26 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             pb.environment().put("DOCKER_HOST", dockerHost);
         }
         pb.redirectErrorStream(true);
-        pb.inheritIO();
         Process process = pb.start();
+
+        // Drain process output in background to prevent blocking and log progress
+        final Process minikubeProcess = process;
+        Thread outputDrainer = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(minikubeProcess.getInputStream()));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.info("[minikube] {}", line);
+                    }
+                } catch (IOException e) {
+                    // Process ended or stream closed
+                }
+            }
+        });
+        outputDrainer.setDaemon(true);
+        outputDrainer.start();
 
         boolean completed = process.waitFor(20, TimeUnit.MINUTES);
         if (!completed) {
