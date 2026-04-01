@@ -24,6 +24,12 @@ import static io.github.intisy.kubernetes.IOUtils.readAllBytes;
  * Docker Engine, then runs Minikube with the docker driver via DOCKER_HOST.
  * <p>
  * Supports multiple simultaneous instances via Minikube profiles.
+ * <p>
+ * Cleanup guarantees:
+ * <ul>
+ *   <li>JVM shutdown hook calls {@link #stop()} on all active providers (even on Ctrl+C).</li>
+ *   <li>File-lock based orphan detection cleans up profiles from crashed JVMs on next start.</li>
+ * </ul>
  *
  * @author Finn Birich
  */
@@ -104,11 +110,14 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
         ensureInstalled();
         Files.createDirectories(instanceDir);
 
-        // Check if profile already exists and is running
+        cleanupOrphanProfiles(minikubePath);
+        acquireInstanceLock(instanceDir, profileName);
+
         String status = runMinikubeCommand("status", "--profile", profileName, "--format", "{{.Host}}");
         if ("Running".equals(status.trim())) {
             log.info("Minikube profile {} is already running", profileName);
             clusterStartedByUs = false;
+            registerInstance();
             return;
         }
 
@@ -116,11 +125,9 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
         log.debug("Administrator check result: {}", isAdmin);
 
         if (isAdmin && isHyperVEnabled()) {
-            // Admin with Hyper-V: use hyperv driver directly — no Docker needed
             log.info("Running with admin privileges and Hyper-V enabled. Using hyperv driver.");
             startWithDriver("hyperv");
         } else {
-            // Use docker-java to bootstrap a self-contained Docker Engine
             log.info("Using docker-java to bootstrap Docker Engine...");
             dockerProvider = DockerProvider.get();
             dockerProvider.start();
@@ -144,13 +151,14 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
                 "--interactive=false"
         );
         pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+        pb.environment().put("LANG", "en_US.UTF-8");
+        pb.environment().put("LC_ALL", "en_US.UTF-8");
         if (dockerHost != null) {
             pb.environment().put("DOCKER_HOST", dockerHost);
         }
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        // Drain process output in background to prevent blocking and log progress
         final Process minikubeProcess = process;
         Thread outputDrainer = new Thread(new Runnable() {
             @Override
@@ -185,6 +193,8 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             throw new RuntimeException("Kubernetes cluster failed to become ready");
         }
 
+        registerInstance();
+
         log.info("Kubernetes cluster started (instance: {}, profile: {}, driver: {})",
                 instanceId, profileName, driver);
     }
@@ -196,8 +206,12 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             pb.redirectErrorStream(true);
             Process process = pb.start();
             byte[] output = readAllBytes(process.getInputStream());
-            int exitCode = process.waitFor();
-            return exitCode == 0 && new String(output).trim().equals("Enabled");
+            boolean completed = process.waitFor(30, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0 && new String(output).trim().equals("Enabled");
         } catch (IOException | InterruptedException e) {
             log.debug("Hyper-V check failed: {}", e.getMessage());
             return false;
@@ -210,60 +224,71 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             pb.redirectErrorStream(true);
             Process process = pb.start();
             readAllBytes(process.getInputStream());
-            int exitCode = process.waitFor();
-            return exitCode == 0;
+            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
         } catch (IOException | InterruptedException e) {
             return false;
         }
     }
 
     @Override
-    public KubernetesClient getClient() {
-        if (this.kubernetesClient == null) {
-            try {
-                String kubectlConfig = runMinikubeCommand("kubectl", "--profile", profileName,
-                        "--", "config", "view", "--minify", "-o",
-                        "jsonpath={.clusters[0].cluster.server}");
-                String apiServerUrl = "https://localhost:8443";
-                if (kubectlConfig != null && !kubectlConfig.trim().isEmpty()
-                        && kubectlConfig.contains("http")) {
-                    apiServerUrl = kubectlConfig.trim();
-                }
+    public KubernetesClient createClient() {
+        try {
+            String kubectlConfig = runMinikubeCommand("kubectl", "--profile", profileName,
+                    "--", "config", "view", "--minify", "-o",
+                    "jsonpath={.clusters[0].cluster.server}");
+            String apiServerUrl = "https://localhost:8443";
+            if (kubectlConfig != null && !kubectlConfig.trim().isEmpty()
+                    && kubectlConfig.contains("http")) {
+                apiServerUrl = kubectlConfig.trim();
+            }
 
-                Path minikubeHome = getBaseDirectory();
-                Path minikubeProfileDir = minikubeHome.resolve("profiles").resolve(profileName);
-                Path caCertPath = minikubeHome.resolve("certs").resolve("ca.pem");
-                if (!Files.exists(caCertPath)) {
-                    caCertPath = minikubeHome.resolve("ca.crt");
-                }
-                Path clientCertPath = minikubeProfileDir.resolve("client.crt");
-                Path clientKeyPath = minikubeProfileDir.resolve("client.key");
+            Path minikubeHome = getBaseDirectory();
+            Path minikubeProfileDir = minikubeHome.resolve("profiles").resolve(profileName);
+            Path caCertPath = minikubeHome.resolve("certs").resolve("ca.pem");
+            if (!Files.exists(caCertPath)) {
+                caCertPath = minikubeHome.resolve("ca.crt");
+            }
+            Path clientCertPath = minikubeProfileDir.resolve("client.crt");
+            Path clientKeyPath = minikubeProfileDir.resolve("client.key");
 
-                if (Files.exists(clientCertPath) && Files.exists(clientKeyPath)
-                        && Files.exists(caCertPath)) {
-                    this.kubernetesClient = KubernetesClient.builder()
-                            .withApiServer(apiServerUrl)
-                            .withCaCert(caCertPath.toString())
-                            .withClientCert(clientCertPath.toString())
-                            .withClientKey(clientKeyPath.toString())
-                            .build();
-                } else {
-                    this.kubernetesClient = KubernetesClient.builder()
-                            .withApiServer(apiServerUrl)
-                            .build();
-                }
-            } catch (Exception e) {
-                log.warn("Failed to get API server details, using default: {}", e.getMessage());
-                this.kubernetesClient = KubernetesClient.builder()
-                        .withApiServer("https://localhost:8443")
+            if (Files.exists(clientCertPath) && Files.exists(clientKeyPath)
+                    && Files.exists(caCertPath)) {
+                return KubernetesClient.builder()
+                        .withApiServer(apiServerUrl)
+                        .withCaCert(caCertPath.toString())
+                        .withClientCert(clientCertPath.toString())
+                        .withClientKey(clientKeyPath.toString())
+                        .build();
+            } else {
+                return KubernetesClient.builder()
+                        .withApiServer(apiServerUrl)
                         .build();
             }
+        } catch (Exception e) {
+            log.warn("Failed to get API server details, using default: {}", e.getMessage());
+            return KubernetesClient.builder()
+                    .withApiServer("https://localhost:8443")
+                    .build();
+        }
+    }
+
+    @Override
+    public KubernetesClient getClient() {
+        if (this.kubernetesClient == null) {
+            this.kubernetesClient = createClient();
         }
         return this.kubernetesClient;
     }
 
     @Override
     public void stop() {
+        unregisterInstance();
+
         log.info("Stopping Kubernetes cluster (instance: {})...", instanceId);
 
         if (kubernetesClient != null) {
@@ -282,12 +307,37 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
                         minikubePath.toString(), "delete", "--profile", profileName
                 );
                 pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+                pb.environment().put("LANG", "en_US.UTF-8");
+                pb.environment().put("LC_ALL", "en_US.UTF-8");
                 if (dockerHost != null) {
                     pb.environment().put("DOCKER_HOST", dockerHost);
                 }
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
-                process.waitFor(60, TimeUnit.SECONDS);
+
+                final Process deleteProcess = process;
+                Thread drainer = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            BufferedReader reader = new BufferedReader(new InputStreamReader(deleteProcess.getInputStream()));
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                log.debug("[minikube delete] {}", line);
+                            }
+                        } catch (IOException e) {
+                            // Process ended
+                        }
+                    }
+                });
+                drainer.setDaemon(true);
+                drainer.start();
+
+                boolean completed = process.waitFor(60, TimeUnit.SECONDS);
+                if (!completed) {
+                    process.destroyForcibly();
+                    log.warn("Timed out deleting Minikube profile: {}", profileName);
+                }
             } catch (IOException | InterruptedException e) {
                 log.warn("Failed to delete Minikube profile: {}", e.getMessage());
             }
@@ -298,6 +348,7 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             dockerProvider = null;
         }
 
+        releaseInstanceLock();
         cleanupInstanceDirectory();
         log.info("Kubernetes cluster stopped (instance: {})", instanceId);
     }
@@ -310,6 +361,8 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
 
             ProcessBuilder pb = new ProcessBuilder(fullArgs);
             pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+            pb.environment().put("LANG", "en_US.UTF-8");
+            pb.environment().put("LC_ALL", "en_US.UTF-8");
             if (dockerHost != null) {
                 pb.environment().put("DOCKER_HOST", dockerHost);
             }

@@ -41,6 +41,13 @@ tasks.register('integrationTest', Test) {
     shouldRunAfter test
 }
 
+tasks.register('resetK8sEnv', Exec) {
+    description = 'Resets the kubernetes-java test environment (kills Docker, shuts down WSL, deletes cached data).'
+    group = 'verification'
+    onlyIf { System.getProperty('os.name').toLowerCase().contains('win') }
+    commandLine 'cmd', '/c', "${projectDir}\\reset-k8s-env.bat", '--force'
+}
+
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
