@@ -316,8 +316,6 @@ public class ModelTest {
         assertNull(ref.getBlockOwnerDeletion());
     }
 
-    // ==================== New Model Tests ====================
-
     @Test
     @DisplayName("Job: default values and spec")
     public void testJob() {

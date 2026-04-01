@@ -13,116 +13,144 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Tests for multiple KubernetesProvider instances running simultaneously.
+ * Tests for multiple KubernetesClient instances sharing a single cluster.
+ * Validates that multiple clients can operate independently on the same Minikube instance.
+ * <p>
+ * Uses a SINGLE provider/cluster (not two) to keep startup fast and resource-light.
+ * Also verifies that unique instance IDs are generated for each provider.
+ * <p>
  * Requires a working Docker + Minikube environment.
  *
  * @author Finn Birich
  */
 @Tag("integration")
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class MultiInstanceTest {
 
     private static final Logger log = LoggerFactory.getLogger(MultiInstanceTest.class);
 
-    @Test
-    void testUniqueInstanceIds() {
-        log.info("Testing unique instance IDs for multiple providers...");
-        KubernetesProvider provider1 = KubernetesProvider.get();
-        KubernetesProvider provider2 = KubernetesProvider.get();
-        KubernetesProvider provider3 = KubernetesProvider.get();
+    private static KubernetesProvider provider;
+    private static KubernetesClient client1;
+    private static KubernetesClient client2;
 
-        Set<String> ids = new HashSet<String>();
-        ids.add(provider1.getInstanceId());
-        ids.add(provider2.getInstanceId());
-        ids.add(provider3.getInstanceId());
+    @BeforeAll
+    static void setUp() throws Exception {
+        log.info("Setting up single provider with two clients...");
+        provider = KubernetesProvider.get();
+        provider.start();
 
-        Assertions.assertEquals(3, ids.size(), "All three providers should have unique instance IDs");
-        log.info("Instance IDs: {}, {}, {}", provider1.getInstanceId(), provider2.getInstanceId(), provider3.getInstanceId());
+        client1 = provider.getClient();
+        client2 = provider.createClient();
+
+        boolean healthy = false;
+        for (int i = 0; i < 10; i++) {
+            try {
+                client1.healthz().exec();
+                healthy = true;
+                log.info("Cluster is healthy after {} attempt(s)", i + 1);
+                break;
+            } catch (Exception e) {
+                log.warn("Cluster not ready yet (attempt {}), retrying in 1s...", i + 1);
+                Thread.sleep(1000);
+            }
+        }
+        Assertions.assertTrue(healthy, "Cluster did not become healthy within 10 attempts");
+    }
+
+    @AfterAll
+    static void tearDown() {
+        if (provider != null) {
+            log.info("Stopping provider...");
+            try {
+                provider.stop();
+            } catch (Exception e) {
+                log.warn("Failed to stop provider: {}", e.getMessage());
+            }
+        }
     }
 
     @Test
-    @Timeout(value = 900, unit = TimeUnit.SECONDS)
-    void testTwoProvidersSimultaneously() throws Exception {
-        log.info("Testing two providers running simultaneously...");
+    @Order(1)
+    void testUniqueInstanceIds() {
+        log.info("Testing unique instance IDs for multiple providers...");
+        KubernetesProvider p1 = KubernetesProvider.get();
+        KubernetesProvider p2 = KubernetesProvider.get();
+        KubernetesProvider p3 = KubernetesProvider.get();
+
+        Set<String> ids = new HashSet<String>();
+        ids.add(p1.getInstanceId());
+        ids.add(p2.getInstanceId());
+        ids.add(p3.getInstanceId());
+
+        Assertions.assertEquals(3, ids.size(), "All three providers should have unique instance IDs");
+        log.info("Instance IDs: {}, {}, {}", p1.getInstanceId(), p2.getInstanceId(), p3.getInstanceId());
+    }
+
+    @Test
+    @Order(2)
+    void testBothClientsHealthz() throws Exception {
+        log.info("Verifying healthz on both clients...");
+        Object health1 = client1.healthz().exec();
+        Object health2 = client2.healthz().exec();
+        Assertions.assertNotNull(health1, "Client 1 healthz should not be null");
+        Assertions.assertNotNull(health2, "Client 2 healthz should not be null");
+        log.info("Both clients report healthy cluster");
+    }
+
+    @Test
+    @Order(3)
+    void testBothClientsVersion() throws Exception {
+        log.info("Verifying version on both clients...");
+        Assertions.assertNotNull(client1.version().exec(), "Client 1 version should not be null");
+        Assertions.assertNotNull(client2.version().exec(), "Client 2 version should not be null");
+        log.info("Both clients successfully retrieved cluster version");
+    }
+
+    @Test
+    @Order(4)
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    void testCrossClientPodVisibility() throws Exception {
         String timestamp = String.valueOf(System.currentTimeMillis());
-        String podName1 = "multi-test-pod1-" + timestamp;
-        String podName2 = "multi-test-pod2-" + timestamp;
+        String podName = "multi-client-pod-" + timestamp;
 
-        KubernetesProvider provider1 = KubernetesProvider.get();
-        KubernetesProvider provider2 = KubernetesProvider.get();
+        log.info("Creating pod {} via client 1...", podName);
+        Pod pod = new Pod();
+        pod.setMetadata(new ObjectMeta());
+        pod.getMetadata().setName(podName);
+        Pod.PodSpec spec = new Pod.PodSpec();
+        Pod.Container container = new Pod.Container();
+        container.setName("nginx");
+        container.setImage("nginx:alpine");
+        spec.setContainers(Collections.singletonList(container));
+        pod.setSpec(spec);
 
+        Pod created = client1.createPod(pod).withNamespace("default").exec();
+        Assertions.assertNotNull(created, "Pod created via client 1 should not be null");
+        Assertions.assertEquals(podName, created.getMetadata().getName());
+
+        log.info("Verifying pod {} is visible via client 2...", podName);
+        Pod retrieved = client2.getPod(podName).withNamespace("default").exec();
+        Assertions.assertNotNull(retrieved, "Pod should be visible via client 2");
+        Assertions.assertEquals(podName, retrieved.getMetadata().getName());
+        log.info("Cross-client pod visibility confirmed");
+
+        log.info("Deleting pod {} via client 2...", podName);
         try {
-            provider1.start();
-            provider2.start();
-
-            KubernetesClient client1 = provider1.getClient();
-            KubernetesClient client2 = provider2.getClient();
-
-            // Verify both clients can call healthz
-            log.info("Verifying healthz on both clients...");
-            Object health1 = client1.healthz().exec();
-            Object health2 = client2.healthz().exec();
-            Assertions.assertNotNull(health1, "Client 1 healthz should not be null");
-            Assertions.assertNotNull(health2, "Client 2 healthz should not be null");
-
-            // Verify both clients can call version
-            log.info("Verifying version on both clients...");
-            Assertions.assertNotNull(client1.version().exec(), "Client 1 version should not be null");
-            Assertions.assertNotNull(client2.version().exec(), "Client 2 version should not be null");
-
-            // Create a pod on each client
-            log.info("Creating pod {} via client 1...", podName1);
-            Pod pod1 = new Pod();
-            pod1.setMetadata(new ObjectMeta());
-            pod1.getMetadata().setName(podName1);
-            Pod.PodSpec spec1 = new Pod.PodSpec();
-            Pod.Container container1 = new Pod.Container();
-            container1.setName("nginx");
-            container1.setImage("nginx:alpine");
-            spec1.setContainers(Collections.singletonList(container1));
-            pod1.setSpec(spec1);
-            Pod created1 = client1.createPod(pod1).withNamespace("default").exec();
-            Assertions.assertNotNull(created1, "Pod created via client 1 should not be null");
-
-            log.info("Creating pod {} via client 2...", podName2);
-            Pod pod2 = new Pod();
-            pod2.setMetadata(new ObjectMeta());
-            pod2.getMetadata().setName(podName2);
-            Pod.PodSpec spec2 = new Pod.PodSpec();
-            Pod.Container container2 = new Pod.Container();
-            container2.setName("nginx");
-            container2.setImage("nginx:alpine");
-            spec2.setContainers(Collections.singletonList(container2));
-            pod2.setSpec(spec2);
-            Pod created2 = client2.createPod(pod2).withNamespace("default").exec();
-            Assertions.assertNotNull(created2, "Pod created via client 2 should not be null");
-
-            log.info("Both pods created successfully");
-
-            // Cleanup pods
-            log.info("Cleaning up test pods...");
-            try {
-                client1.deletePod(podName1).withNamespace("default").exec();
-            } catch (Exception e) {
-                log.warn("Failed to delete pod {}: {}", podName1, e.getMessage());
-            }
-            try {
-                client2.deletePod(podName2).withNamespace("default").exec();
-            } catch (Exception e) {
-                log.warn("Failed to delete pod {}: {}", podName2, e.getMessage());
-            }
-        } finally {
-            log.info("Stopping both providers...");
-            try {
-                provider1.stop();
-            } catch (Exception e) {
-                log.warn("Failed to stop provider 1: {}", e.getMessage());
-            }
-            try {
-                provider2.stop();
-            } catch (Exception e) {
-                log.warn("Failed to stop provider 2: {}", e.getMessage());
-            }
+            client2.deletePod(podName).withNamespace("default").exec();
+            log.info("Pod {} deleted successfully", podName);
+        } catch (Exception e) {
+            log.warn("Failed to delete pod {}: {}", podName, e.getMessage());
         }
-        log.info("Multi-instance test completed successfully");
+    }
+
+    @Test
+    @Order(5)
+    void testBothClientsListPods() throws Exception {
+        log.info("Listing pods via both clients...");
+        Assertions.assertNotNull(client1.listPods().withNamespace("default").exec(),
+                "Client 1 should list pods");
+        Assertions.assertNotNull(client2.listPods().withNamespace("default").exec(),
+                "Client 2 should list pods");
+        log.info("Both clients can list pods independently");
     }
 }

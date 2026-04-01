@@ -23,6 +23,12 @@ import static io.github.intisy.kubernetes.IOUtils.readAllBytes;
  * Downloads and manages Minikube to provide standalone Kubernetes clusters.
  * Supports multiple simultaneous instances via Minikube profiles.
  * Uses qemu2 as the primary driver to avoid dependency on Docker Desktop.
+ * <p>
+ * Cleanup guarantees:
+ * <ul>
+ *   <li>JVM shutdown hook calls {@link #stop()} on all active providers (even on Ctrl+C).</li>
+ *   <li>File-lock based orphan detection cleans up profiles from crashed JVMs on next start.</li>
+ * </ul>
  *
  * @author Finn Birich
  */
@@ -102,6 +108,7 @@ public class MacKubernetesProvider extends KubernetesProvider {
     }
 
     private String getKubectlStableVersion() throws IOException {
+        @SuppressWarnings("deprecation")
         URL url = new URL(KUBECTL_DOWNLOAD_URL);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setInstanceFollowRedirects(true);
@@ -119,15 +126,17 @@ public class MacKubernetesProvider extends KubernetesProvider {
         ensureInstalled();
         Files.createDirectories(instanceDir);
 
-        // Check if profile already exists and is running
+        cleanupOrphanProfiles(minikubePath);
+        acquireInstanceLock(instanceDir, profileName);
+
         String status = runMinikubeCommand("status", "--profile", profileName, "--format", "{{.Host}}");
         if ("Running".equals(status.trim())) {
             log.info("Minikube profile {} is already running", profileName);
             clusterStartedByUs = false;
+            registerInstance();
             return;
         }
 
-        // On macOS, use qemu2 as the primary driver
         String driver = detectDriver();
         log.info("Starting Minikube with profile: {} (driver: {})", profileName, driver);
 
@@ -142,10 +151,11 @@ public class MacKubernetesProvider extends KubernetesProvider {
                 "--interactive=false"
         );
         pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+        pb.environment().put("LANG", "en_US.UTF-8");
+        pb.environment().put("LC_ALL", "en_US.UTF-8");
         pb.redirectErrorStream(true);
         Process process = pb.start();
 
-        // Drain process output in background to prevent blocking and log progress
         final Process minikubeProcess = process;
         Thread outputDrainer = new Thread(new Runnable() {
             @Override
@@ -180,58 +190,65 @@ public class MacKubernetesProvider extends KubernetesProvider {
             throw new RuntimeException("Kubernetes cluster failed to become ready");
         }
 
+        registerInstance();
+
         log.info("Kubernetes cluster started (instance: {}, profile: {})", instanceId, profileName);
     }
 
     private String detectDriver() {
-        // qemu2 works on both Intel and Apple Silicon Macs
-        // No external application required - ships with minikube
         return "qemu2";
+    }
+
+    @Override
+    public KubernetesClient createClient() {
+        try {
+            String kubectlConfig = runMinikubeCommand("kubectl", "--profile", profileName, "--", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}");
+            String apiServerUrl = "https://localhost:8443";
+            if (kubectlConfig != null && !kubectlConfig.trim().isEmpty() && kubectlConfig.contains("http")) {
+                apiServerUrl = kubectlConfig.trim();
+            }
+
+            Path minikubeHome = getBaseDirectory();
+            Path minikubeProfileDir = minikubeHome.resolve("profiles").resolve(profileName);
+            Path caCertPath = minikubeHome.resolve("certs").resolve("ca.pem");
+            if (!Files.exists(caCertPath)) {
+                caCertPath = minikubeHome.resolve("ca.crt");
+            }
+            Path clientCertPath = minikubeProfileDir.resolve("client.crt");
+            Path clientKeyPath = minikubeProfileDir.resolve("client.key");
+
+            if (Files.exists(clientCertPath) && Files.exists(clientKeyPath) && Files.exists(caCertPath)) {
+                return KubernetesClient.builder()
+                        .withApiServer(apiServerUrl)
+                        .withCaCert(caCertPath.toString())
+                        .withClientCert(clientCertPath.toString())
+                        .withClientKey(clientKeyPath.toString())
+                        .build();
+            } else {
+                return KubernetesClient.builder()
+                        .withApiServer(apiServerUrl)
+                        .build();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get API server details, using default: {}", e.getMessage());
+            return KubernetesClient.builder()
+                    .withApiServer("https://localhost:8443")
+                    .build();
+        }
     }
 
     @Override
     public KubernetesClient getClient() {
         if (this.kubernetesClient == null) {
-            try {
-                String kubectlConfig = runMinikubeCommand("kubectl", "--profile", profileName, "--", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].cluster.server}");
-                String apiServerUrl = "https://localhost:8443";
-                if (kubectlConfig != null && !kubectlConfig.trim().isEmpty() && kubectlConfig.contains("http")) {
-                    apiServerUrl = kubectlConfig.trim();
-                }
-
-                Path minikubeHome = getBaseDirectory();
-                Path minikubeProfileDir = minikubeHome.resolve("profiles").resolve(profileName);
-                Path caCertPath = minikubeHome.resolve("certs").resolve("ca.pem");
-                if (!Files.exists(caCertPath)) {
-                    caCertPath = minikubeHome.resolve("ca.crt");
-                }
-                Path clientCertPath = minikubeProfileDir.resolve("client.crt");
-                Path clientKeyPath = minikubeProfileDir.resolve("client.key");
-
-                if (Files.exists(clientCertPath) && Files.exists(clientKeyPath) && Files.exists(caCertPath)) {
-                    this.kubernetesClient = KubernetesClient.builder()
-                            .withApiServer(apiServerUrl)
-                            .withCaCert(caCertPath.toString())
-                            .withClientCert(clientCertPath.toString())
-                            .withClientKey(clientKeyPath.toString())
-                            .build();
-                } else {
-                    this.kubernetesClient = KubernetesClient.builder()
-                            .withApiServer(apiServerUrl)
-                            .build();
-                }
-            } catch (Exception e) {
-                log.warn("Failed to get API server details, using default: {}", e.getMessage());
-                this.kubernetesClient = KubernetesClient.builder()
-                        .withApiServer("https://localhost:8443")
-                        .build();
-            }
+            this.kubernetesClient = createClient();
         }
         return this.kubernetesClient;
     }
 
     @Override
     public void stop() {
+        unregisterInstance();
+
         log.info("Stopping Kubernetes cluster (instance: {})...", instanceId);
 
         if (kubernetesClient != null) {
@@ -250,14 +267,40 @@ public class MacKubernetesProvider extends KubernetesProvider {
                         minikubePath.toString(), "delete", "--profile", profileName
                 );
                 pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+                pb.environment().put("LANG", "en_US.UTF-8");
+                pb.environment().put("LC_ALL", "en_US.UTF-8");
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
-                process.waitFor(60, TimeUnit.SECONDS);
+
+                final Process deleteProcess = process;
+                Thread drainer = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            BufferedReader reader = new BufferedReader(new InputStreamReader(deleteProcess.getInputStream()));
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                log.debug("[minikube delete] {}", line);
+                            }
+                        } catch (IOException e) {
+                            // Process ended
+                        }
+                    }
+                });
+                drainer.setDaemon(true);
+                drainer.start();
+
+                boolean completed = process.waitFor(60, TimeUnit.SECONDS);
+                if (!completed) {
+                    process.destroyForcibly();
+                    log.warn("Timed out deleting Minikube profile: {}", profileName);
+                }
             } catch (IOException | InterruptedException e) {
                 log.warn("Failed to delete Minikube profile: {}", e.getMessage());
             }
         }
 
+        releaseInstanceLock();
         cleanupInstanceDirectory();
         log.info("Kubernetes cluster stopped (instance: {})", instanceId);
     }
@@ -270,6 +313,8 @@ public class MacKubernetesProvider extends KubernetesProvider {
 
             ProcessBuilder pb = new ProcessBuilder(fullArgs);
             pb.environment().put("MINIKUBE_HOME", getBaseDirectory().toString());
+            pb.environment().put("LANG", "en_US.UTF-8");
+            pb.environment().put("LC_ALL", "en_US.UTF-8");
             pb.redirectErrorStream(true);
             Process process = pb.start();
             byte[] output = readAllBytes(process.getInputStream());

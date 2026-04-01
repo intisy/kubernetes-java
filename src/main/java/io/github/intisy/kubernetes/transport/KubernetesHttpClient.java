@@ -334,7 +334,6 @@ public class KubernetesHttpClient implements Closeable {
     private SSLSocketFactory createSslSocketFactory(String caCertPath, String clientCertPath, String clientKeyPath) throws Exception {
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
 
-        // Load CA certificate
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         trustStore.load(null, null);
         try (InputStream caInput = Files.newInputStream(new File(caCertPath).toPath())) {
@@ -347,8 +346,6 @@ public class KubernetesHttpClient implements Closeable {
 
         KeyManager[] keyManagers = null;
         if (clientCertPath != null && clientKeyPath != null) {
-            // For client certificate auth, we use the minikube-generated client cert/key
-            // Minikube provides these in PEM format; we convert to PKCS12 via process
             keyManagers = createKeyManagers(clientCertPath, clientKeyPath);
         }
 
@@ -376,7 +373,6 @@ public class KubernetesHttpClient implements Closeable {
     }
 
     private KeyManager[] createKeyManagers(String clientCertPath, String clientKeyPath) throws Exception {
-        // Create a temporary PKCS12 keystore from PEM cert/key using openssl
         Path tempP12 = Files.createTempFile("k8s-client-", ".p12");
         try {
             String password = "changeit";
@@ -447,6 +443,5 @@ public class KubernetesHttpClient implements Closeable {
 
     @Override
     public void close() throws IOException {
-        // No persistent connections to close
     }
 }
