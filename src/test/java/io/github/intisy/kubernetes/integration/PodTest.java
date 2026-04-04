@@ -1,9 +1,10 @@
-package io.github.intisy.kubernetes;
+package io.github.intisy.kubernetes.integration;
 
+import io.github.intisy.kubernetes.KubernetesClient;
+import io.github.intisy.kubernetes.KubernetesProvider;
 import io.github.intisy.kubernetes.exception.NotFoundException;
 import io.github.intisy.kubernetes.model.*;
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +20,6 @@ import java.util.Map;
  *
  * @author Finn Birich
  */
-@Tag("integration")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class PodTest {
 

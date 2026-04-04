@@ -1,5 +1,6 @@
-package io.github.intisy.kubernetes;
+package io.github.intisy.kubernetes.unit;
 
+import io.github.intisy.kubernetes.KubernetesClient;
 import io.github.intisy.kubernetes.model.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

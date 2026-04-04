@@ -177,7 +177,6 @@ public class LinuxKubernetesProvider extends KubernetesProvider {
                         log.info("[minikube] {}", line);
                     }
                 } catch (IOException e) {
-                    // Process ended or stream closed
                 }
             }
         });
@@ -296,7 +295,6 @@ public class LinuxKubernetesProvider extends KubernetesProvider {
                                 log.debug("[minikube delete] {}", line);
                             }
                         } catch (IOException e) {
-                            // Process ended
                         }
                     }
                 });
