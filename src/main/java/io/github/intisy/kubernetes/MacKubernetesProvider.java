@@ -167,7 +167,6 @@ public class MacKubernetesProvider extends KubernetesProvider {
                         log.info("[minikube] {}", line);
                     }
                 } catch (IOException e) {
-                    // Process ended or stream closed
                 }
             }
         });
@@ -283,7 +282,6 @@ public class MacKubernetesProvider extends KubernetesProvider {
                                 log.debug("[minikube delete] {}", line);
                             }
                         } catch (IOException e) {
-                            // Process ended
                         }
                     }
                 });

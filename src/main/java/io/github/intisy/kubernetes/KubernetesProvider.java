@@ -148,10 +148,6 @@ public abstract class KubernetesProvider {
      */
     public abstract void ensureInstalled() throws IOException;
 
-    // =========================================================================
-    // Shutdown hooks and orphan detection
-    // =========================================================================
-
     /**
      * Register this provider as active and ensure the JVM shutdown hook is installed.
      * <p>
@@ -286,14 +282,12 @@ public abstract class KubernetesProvider {
                 File lockFile = new File(dir, "instance.lock");
 
                 if (!lockFile.exists()) {
-                    // No lock file — stale directory from before lock support
                     log.info("Found orphaned instance directory without lock: {}", dirName);
                     deleteOrphanProfile(profileName, minikubePath);
                     deleteDirectory(dir);
                     continue;
                 }
 
-                // Try to acquire the lock to check if the owning process is still alive
                 RandomAccessFile raf = null;
                 FileLock lock = null;
                 try {
@@ -305,7 +299,6 @@ public abstract class KubernetesProvider {
                             raf.seek(0);
                             resolvedProfile = raf.readUTF();
                         } catch (Exception e) {
-                            // Corrupted lock file, use derived profile name
                         }
 
                         log.info("Found orphaned Kubernetes instance: {} (profile: {})", dirName, resolvedProfile);
@@ -364,7 +357,6 @@ public abstract class KubernetesProvider {
                     try {
                         IOUtils.readAllBytes(p.getInputStream());
                     } catch (IOException e) {
-                        // ignore
                     }
                 }
             });

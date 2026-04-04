@@ -20,23 +20,34 @@ repositories {
 }
 
 dependencies {
-    githubImplementation "intisy:docker-java:1.2.4.4"
+    githubImplementation "intisy:docker-java:1.2.5.6"
     api "com.google.code.gson:gson:2.10.1"
     implementation "org.slf4j:slf4j-simple:2.0.7"
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.1"
 }
 
 test {
-    useJUnitPlatform {
-        excludeTags 'integration'
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching 'io.github.intisy.kubernetes.unit.*'
+    }
+}
+
+tasks.register('ciTest', Test) {
+    description = 'Runs CI-safe unit tests (no Docker/Minikube required).'
+    group = 'verification'
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching 'io.github.intisy.kubernetes.unit.*'
     }
 }
 
 tasks.register('integrationTest', Test) {
     description = 'Runs integration tests (requires Docker + Minikube).'
     group = 'verification'
-    useJUnitPlatform {
-        includeTags 'integration'
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching 'io.github.intisy.kubernetes.integration.*'
     }
     shouldRunAfter test
 }

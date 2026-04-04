@@ -74,7 +74,6 @@ public class KubernetesClient implements Closeable {
         return new Builder();
     }
 
-    // ==================== Pod Commands ====================
 
     public ListPodsCmd listPods() {
         return new ListPodsCmd(httpClient);
@@ -100,7 +99,6 @@ public class KubernetesClient implements Closeable {
         return new LogsPodCmd(httpClient, podName);
     }
 
-    // ==================== Deployment Commands ====================
 
     public ListDeploymentsCmd listDeployments() {
         return new ListDeploymentsCmd(httpClient);
@@ -126,7 +124,6 @@ public class KubernetesClient implements Closeable {
         return new ScaleDeploymentCmd(httpClient, deploymentName);
     }
 
-    // ==================== Service Commands ====================
 
     public ListServicesCmd listServices() {
         return new ListServicesCmd(httpClient);
@@ -148,7 +145,6 @@ public class KubernetesClient implements Closeable {
         return new GetServiceCmd(httpClient, serviceName);
     }
 
-    // ==================== Namespace Commands ====================
 
     public ListNamespacesCmd listNamespaces() {
         return new ListNamespacesCmd(httpClient);
@@ -166,7 +162,6 @@ public class KubernetesClient implements Closeable {
         return new GetNamespaceCmd(httpClient, namespaceName);
     }
 
-    // ==================== Node Commands ====================
 
     public ListNodesCmd listNodes() {
         return new ListNodesCmd(httpClient);
@@ -176,7 +171,6 @@ public class KubernetesClient implements Closeable {
         return new GetNodeCmd(httpClient, nodeName);
     }
 
-    // ==================== ConfigMap Commands ====================
 
     public ListConfigMapsCmd listConfigMaps() {
         return new ListConfigMapsCmd(httpClient);
@@ -198,7 +192,6 @@ public class KubernetesClient implements Closeable {
         return new GetConfigMapCmd(httpClient, configMapName);
     }
 
-    // ==================== Secret Commands ====================
 
     public ListSecretsCmd listSecrets() {
         return new ListSecretsCmd(httpClient);
@@ -220,7 +213,6 @@ public class KubernetesClient implements Closeable {
         return new GetSecretCmd(httpClient, secretName);
     }
 
-    // ==================== Job Commands ====================
 
     public ListJobsCmd listJobs() {
         return new ListJobsCmd(httpClient);
@@ -238,7 +230,6 @@ public class KubernetesClient implements Closeable {
         return new GetJobCmd(httpClient, jobName);
     }
 
-    // ==================== CronJob Commands ====================
 
     public ListCronJobsCmd listCronJobs() {
         return new ListCronJobsCmd(httpClient);
@@ -256,7 +247,6 @@ public class KubernetesClient implements Closeable {
         return new GetCronJobCmd(httpClient, cronJobName);
     }
 
-    // ==================== StatefulSet Commands ====================
 
     public ListStatefulSetsCmd listStatefulSets() {
         return new ListStatefulSetsCmd(httpClient);
@@ -278,7 +268,6 @@ public class KubernetesClient implements Closeable {
         return new ScaleStatefulSetCmd(httpClient, statefulSetName);
     }
 
-    // ==================== DaemonSet Commands ====================
 
     public ListDaemonSetsCmd listDaemonSets() {
         return new ListDaemonSetsCmd(httpClient);
@@ -296,7 +285,6 @@ public class KubernetesClient implements Closeable {
         return new GetDaemonSetCmd(httpClient, daemonSetName);
     }
 
-    // ==================== ReplicaSet Commands ====================
 
     public ListReplicaSetsCmd listReplicaSets() {
         return new ListReplicaSetsCmd(httpClient);
@@ -306,7 +294,6 @@ public class KubernetesClient implements Closeable {
         return new GetReplicaSetCmd(httpClient, replicaSetName);
     }
 
-    // ==================== Ingress Commands ====================
 
     public ListIngressesCmd listIngresses() {
         return new ListIngressesCmd(httpClient);
@@ -324,7 +311,6 @@ public class KubernetesClient implements Closeable {
         return new GetIngressCmd(httpClient, ingressName);
     }
 
-    // ==================== NetworkPolicy Commands ====================
 
     public ListNetworkPoliciesCmd listNetworkPolicies() {
         return new ListNetworkPoliciesCmd(httpClient);
@@ -342,7 +328,6 @@ public class KubernetesClient implements Closeable {
         return new GetNetworkPolicyCmd(httpClient, networkPolicyName);
     }
 
-    // ==================== PersistentVolumeClaim Commands ====================
 
     public ListPersistentVolumeClaimsCmd listPersistentVolumeClaims() {
         return new ListPersistentVolumeClaimsCmd(httpClient);
@@ -360,7 +345,6 @@ public class KubernetesClient implements Closeable {
         return new GetPersistentVolumeClaimCmd(httpClient, pvcName);
     }
 
-    // ==================== PersistentVolume Commands ====================
 
     public ListPersistentVolumesCmd listPersistentVolumes() {
         return new ListPersistentVolumesCmd(httpClient);
@@ -378,7 +362,6 @@ public class KubernetesClient implements Closeable {
         return new GetPersistentVolumeCmd(httpClient, pvName);
     }
 
-    // ==================== ServiceAccount Commands ====================
 
     public ListServiceAccountsCmd listServiceAccounts() {
         return new ListServiceAccountsCmd(httpClient);
@@ -396,7 +379,6 @@ public class KubernetesClient implements Closeable {
         return new GetServiceAccountCmd(httpClient, serviceAccountName);
     }
 
-    // ==================== Endpoints Commands ====================
 
     public ListEndpointsCmd listEndpoints() {
         return new ListEndpointsCmd(httpClient);
@@ -406,13 +388,11 @@ public class KubernetesClient implements Closeable {
         return new GetEndpointsCmd(httpClient, endpointsName);
     }
 
-    // ==================== Event Commands ====================
 
     public ListEventsCmd listEvents() {
         return new ListEventsCmd(httpClient);
     }
 
-    // ==================== HorizontalPodAutoscaler Commands ====================
 
     public ListHorizontalPodAutoscalersCmd listHorizontalPodAutoscalers() {
         return new ListHorizontalPodAutoscalersCmd(httpClient);
@@ -430,7 +410,6 @@ public class KubernetesClient implements Closeable {
         return new GetHorizontalPodAutoscalerCmd(httpClient, hpaName);
     }
 
-    // ==================== Role Commands ====================
 
     public ListRolesCmd listRoles() {
         return new ListRolesCmd(httpClient);
@@ -444,7 +423,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteRoleCmd(httpClient, roleName);
     }
 
-    // ==================== ClusterRole Commands ====================
 
     public ListClusterRolesCmd listClusterRoles() {
         return new ListClusterRolesCmd(httpClient);
@@ -458,7 +436,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteClusterRoleCmd(httpClient, clusterRoleName);
     }
 
-    // ==================== RoleBinding Commands ====================
 
     public ListRoleBindingsCmd listRoleBindings() {
         return new ListRoleBindingsCmd(httpClient);
@@ -472,7 +449,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteRoleBindingCmd(httpClient, roleBindingName);
     }
 
-    // ==================== ClusterRoleBinding Commands ====================
 
     public ListClusterRoleBindingsCmd listClusterRoleBindings() {
         return new ListClusterRoleBindingsCmd(httpClient);
@@ -486,7 +462,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteClusterRoleBindingCmd(httpClient, clusterRoleBindingName);
     }
 
-    // ==================== ResourceQuota Commands ====================
 
     public ListResourceQuotasCmd listResourceQuotas() {
         return new ListResourceQuotasCmd(httpClient);
@@ -500,7 +475,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteResourceQuotaCmd(httpClient, resourceQuotaName);
     }
 
-    // ==================== LimitRange Commands ====================
 
     public ListLimitRangesCmd listLimitRanges() {
         return new ListLimitRangesCmd(httpClient);
@@ -514,7 +488,6 @@ public class KubernetesClient implements Closeable {
         return new DeleteLimitRangeCmd(httpClient, limitRangeName);
     }
 
-    // ==================== StorageClass Commands ====================
 
     public ListStorageClassesCmd listStorageClasses() {
         return new ListStorageClassesCmd(httpClient);
@@ -524,7 +497,6 @@ public class KubernetesClient implements Closeable {
         return new GetStorageClassCmd(httpClient, storageClassName);
     }
 
-    // ==================== PodDisruptionBudget Commands ====================
 
     public ListPodDisruptionBudgetsCmd listPodDisruptionBudgets() {
         return new ListPodDisruptionBudgetsCmd(httpClient);
@@ -538,7 +510,6 @@ public class KubernetesClient implements Closeable {
         return new DeletePodDisruptionBudgetCmd(httpClient, pdbName);
     }
 
-    // ==================== System Commands ====================
 
     public HealthzCmd healthz() {
         return new HealthzCmd(httpClient);
