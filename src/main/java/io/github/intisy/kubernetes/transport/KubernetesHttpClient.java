@@ -247,8 +247,7 @@ public class KubernetesHttpClient implements Closeable {
             conn = (HttpURLConnection) url.openConnection();
         }
 
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("X-HTTP-Method-Override", "PATCH");
+        setHttpMethod(conn, "PATCH");
         conn.setConnectTimeout(timeout);
         conn.setReadTimeout(timeout);
         conn.setRequestProperty("Accept", "application/json");
@@ -278,6 +277,20 @@ public class KubernetesHttpClient implements Closeable {
         }
 
         return new KubernetesResponse(statusCode, headers, responseBody);
+    }
+
+    private void setHttpMethod(HttpURLConnection conn, String method) {
+        try {
+            conn.setRequestMethod(method);
+        } catch (java.net.ProtocolException e) {
+            try {
+                java.lang.reflect.Field methodField = HttpURLConnection.class.getDeclaredField("method");
+                methodField.setAccessible(true);
+                methodField.set(conn, method);
+            } catch (Exception ex) {
+                throw new RuntimeException("Failed to set HTTP method to " + method, ex);
+            }
+        }
     }
 
     private void requestStream(String method, String path, StreamCallback<String> callback) throws IOException {
@@ -373,35 +386,117 @@ public class KubernetesHttpClient implements Closeable {
     }
 
     private KeyManager[] createKeyManagers(String clientCertPath, String clientKeyPath) throws Exception {
-        Path tempP12 = Files.createTempFile("k8s-client-", ".p12");
-        try {
-            String password = "changeit";
-            ProcessBuilder pb = new ProcessBuilder(
-                    "openssl", "pkcs12", "-export",
-                    "-in", clientCertPath,
-                    "-inkey", clientKeyPath,
-                    "-out", tempP12.toString(),
-                    "-passout", "pass:" + password
-            );
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            process.waitFor();
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        X509Certificate clientCert;
+        try (InputStream certInput = Files.newInputStream(new File(clientCertPath).toPath())) {
+            clientCert = (X509Certificate) cf.generateCertificate(certInput);
+        }
 
-            if (process.exitValue() != 0) {
-                log.warn("openssl pkcs12 export failed, client cert auth may not work");
+        byte[] keyBytes = parsePemPrivateKey(new File(clientKeyPath).toPath());
+        if (keyBytes == null) {
+            log.warn("Failed to parse client private key from: {}", clientKeyPath);
+            return null;
+        }
+
+        java.security.PrivateKey privateKey;
+        try {
+            java.security.spec.PKCS8EncodedKeySpec keySpec = new java.security.spec.PKCS8EncodedKeySpec(keyBytes);
+            java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
+            privateKey = kf.generatePrivate(keySpec);
+        } catch (java.security.spec.InvalidKeySpecException e) {
+            try {
+                java.security.spec.PKCS8EncodedKeySpec keySpec = new java.security.spec.PKCS8EncodedKeySpec(keyBytes);
+                java.security.KeyFactory kf = java.security.KeyFactory.getInstance("EC");
+                privateKey = kf.generatePrivate(keySpec);
+            } catch (java.security.spec.InvalidKeySpecException e2) {
+                log.warn("Failed to parse private key as RSA or EC: {}", e.getMessage());
                 return null;
             }
+        }
 
-            KeyStore keyStore = KeyStore.getInstance("PKCS12");
-            try (InputStream ksInput = Files.newInputStream(tempP12)) {
-                keyStore.load(ksInput, password.toCharArray());
-            }
+        char[] password = "changeit".toCharArray();
+        KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+        keyStore.load(null, null);
+        keyStore.setKeyEntry("client", privateKey, password,
+                new java.security.cert.Certificate[]{clientCert});
 
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-            kmf.init(keyStore, password.toCharArray());
-            return kmf.getKeyManagers();
-        } finally {
-            Files.deleteIfExists(tempP12);
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, password);
+        return kmf.getKeyManagers();
+    }
+
+    private byte[] parsePemPrivateKey(Path keyPath) throws IOException {
+        String pem = new String(Files.readAllBytes(keyPath), StandardCharsets.UTF_8);
+
+        boolean isPkcs1 = pem.contains("BEGIN RSA PRIVATE KEY");
+
+        String base64 = pem
+                .replaceAll("-----BEGIN [A-Z ]+-----", "")
+                .replaceAll("-----END [A-Z ]+-----", "")
+                .replaceAll("\\s", "");
+
+        if (base64.isEmpty()) {
+            return null;
+        }
+
+        byte[] decoded = Base64.getDecoder().decode(base64);
+
+        if (isPkcs1) {
+            decoded = wrapPkcs1InPkcs8(decoded);
+        }
+
+        return decoded;
+    }
+
+    private byte[] wrapPkcs1InPkcs8(byte[] pkcs1Bytes) {
+        byte[] oid = {0x06, 0x09, 0x2a, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xf7, 0x0d, 0x01, 0x01, 0x01};
+        byte[] nullParam = {0x05, 0x00};
+
+        byte[] algorithmSeq = new byte[2 + oid.length + nullParam.length];
+        algorithmSeq[0] = 0x30;
+        algorithmSeq[1] = (byte) (oid.length + nullParam.length);
+        System.arraycopy(oid, 0, algorithmSeq, 2, oid.length);
+        System.arraycopy(nullParam, 0, algorithmSeq, 2 + oid.length, nullParam.length);
+
+        byte[] octetString = encodeDerOctetString(pkcs1Bytes);
+
+        byte[] versionBytes = {0x02, 0x01, 0x00};
+
+        int totalContentLen = versionBytes.length + algorithmSeq.length + octetString.length;
+        byte[] lenBytes = encodeDerLength(totalContentLen);
+
+        byte[] result = new byte[1 + lenBytes.length + totalContentLen];
+        result[0] = 0x30;
+        int offset = 1;
+        System.arraycopy(lenBytes, 0, result, offset, lenBytes.length);
+        offset += lenBytes.length;
+        System.arraycopy(versionBytes, 0, result, offset, versionBytes.length);
+        offset += versionBytes.length;
+        System.arraycopy(algorithmSeq, 0, result, offset, algorithmSeq.length);
+        offset += algorithmSeq.length;
+        System.arraycopy(octetString, 0, result, offset, octetString.length);
+
+        return result;
+    }
+
+    private byte[] encodeDerOctetString(byte[] content) {
+        byte[] lenBytes = encodeDerLength(content.length);
+        byte[] result = new byte[1 + lenBytes.length + content.length];
+        result[0] = 0x04;
+        System.arraycopy(lenBytes, 0, result, 1, lenBytes.length);
+        System.arraycopy(content, 0, result, 1 + lenBytes.length, content.length);
+        return result;
+    }
+
+    private byte[] encodeDerLength(int length) {
+        if (length < 128) {
+            return new byte[]{(byte) length};
+        } else if (length < 256) {
+            return new byte[]{(byte) 0x81, (byte) length};
+        } else if (length < 65536) {
+            return new byte[]{(byte) 0x82, (byte) (length >> 8), (byte) (length & 0xff)};
+        } else {
+            return new byte[]{(byte) 0x83, (byte) (length >> 16), (byte) ((length >> 8) & 0xff), (byte) (length & 0xff)};
         }
     }
 
