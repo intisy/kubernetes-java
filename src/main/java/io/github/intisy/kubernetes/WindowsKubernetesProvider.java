@@ -247,13 +247,15 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             }
 
             Path minikubeHome = getBaseDirectory();
-            Path minikubeProfileDir = minikubeHome.resolve("profiles").resolve(profileName);
-            Path caCertPath = minikubeHome.resolve("certs").resolve("ca.pem");
-            if (!Files.exists(caCertPath)) {
-                caCertPath = minikubeHome.resolve("ca.crt");
-            }
+            Path minikubeDir = minikubeHome.resolve(".minikube");
+            Path minikubeProfileDir = minikubeDir.resolve("profiles").resolve(profileName);
+            Path caCertPath = minikubeDir.resolve("ca.crt");
             Path clientCertPath = minikubeProfileDir.resolve("client.crt");
             Path clientKeyPath = minikubeProfileDir.resolve("client.key");
+            log.debug("Cert paths - CA: {}, client cert: {}, client key: {}",
+                    caCertPath, clientCertPath, clientKeyPath);
+            log.debug("CA exists: {}, cert exists: {}, key exists: {}",
+                    Files.exists(caCertPath), Files.exists(clientCertPath), Files.exists(clientKeyPath));
 
             if (Files.exists(clientCertPath) && Files.exists(clientKeyPath)
                     && Files.exists(caCertPath)) {

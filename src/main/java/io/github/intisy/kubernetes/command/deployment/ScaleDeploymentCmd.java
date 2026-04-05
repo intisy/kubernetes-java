@@ -35,21 +35,44 @@ public class ScaleDeploymentCmd {
     }
 
     public Deployment exec() {
-        try {
-            String path = "/apis/apps/v1/namespaces/" + namespace + "/deployments/" + deploymentName;
-            String patchBody = "{\"spec\":{\"replicas\":" + replicas + "}}";
-            KubernetesResponse response = client.patch(path, patchBody);
+        String deployPath = "/apis/apps/v1/namespaces/" + namespace + "/deployments/" + deploymentName;
+        int maxRetries = 5;
 
-            if (response.getStatusCode() == 404) {
-                throw new NotFoundException("Deployment not found: " + deploymentName);
-            }
-            if (!response.isSuccessful()) {
-                throw new KubernetesException("Failed to scale deployment: " + response.getBody(), response.getStatusCode());
-            }
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                KubernetesResponse getResponse = client.get(deployPath);
+                if (getResponse.getStatusCode() == 404) {
+                    throw new NotFoundException("Deployment not found: " + deploymentName);
+                }
+                if (!getResponse.isSuccessful()) {
+                    throw new KubernetesException("Failed to get deployment: " + getResponse.getBody(), getResponse.getStatusCode());
+                }
 
-            return client.getGson().fromJson(response.getBody(), Deployment.class);
-        } catch (IOException e) {
-            throw new KubernetesException("Failed to scale deployment", e);
+                com.google.gson.JsonObject deployment = client.getGson().fromJson(getResponse.getBody(), com.google.gson.JsonObject.class);
+                deployment.getAsJsonObject("spec").addProperty("replicas", replicas);
+
+                KubernetesResponse putResponse = client.put(deployPath, deployment);
+
+                if (putResponse.getStatusCode() == 409 && attempt < maxRetries - 1) {
+                    try {
+                        Thread.sleep(100L * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new KubernetesException("Interrupted while retrying scale", ie);
+                    }
+                    continue;
+                }
+
+                if (!putResponse.isSuccessful()) {
+                    throw new KubernetesException("Failed to scale deployment: " + putResponse.getBody(), putResponse.getStatusCode());
+                }
+
+                return client.getGson().fromJson(putResponse.getBody(), Deployment.class);
+            } catch (IOException e) {
+                throw new KubernetesException("Failed to scale deployment", e);
+            }
         }
+
+        throw new KubernetesException("Failed to scale deployment after " + maxRetries + " retries due to conflicts", 409);
     }
 }
