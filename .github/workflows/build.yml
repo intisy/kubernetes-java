@@ -3,6 +3,8 @@ on:
   push:
     tags:
       - "*"
+permissions:
+  contents: write
 jobs:
   test:
     strategy:
@@ -26,6 +28,8 @@ jobs:
       - name: Run unit tests
         run: ./gradlew ciTest --no-daemon --info
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     needs: test
@@ -40,9 +44,6 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: Setup Git
-        run: echo ${{ secrets.PAT }} | gh auth login --with-token
-
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v3
 
@@ -51,8 +52,12 @@ jobs:
 
       - name: Run build with Gradle Wrapper
         run: ./gradlew build -x test --no-daemon -Partifact_version=${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Release and Upload Jar
         run: |
           gh release create ${{ github.ref_name }} -t "Release ${{ github.ref_name }}"
           gh release upload "${{ github.ref_name }}" build/libs/* --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
