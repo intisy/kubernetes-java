@@ -1,6 +1,8 @@
 package io.github.intisy.kubernetes;
 
 import io.github.intisy.docker.DockerProvider;
+import io.github.intisy.docker.WindowsElevation;
+import io.github.intisy.docker.WindowsFeatures;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -121,10 +123,10 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
             return;
         }
 
-        boolean isAdmin = isAdministrator();
+        boolean isAdmin = WindowsElevation.isAdministrator();
         log.debug("Administrator check result: {}", isAdmin);
 
-        if (isAdmin && isHyperVEnabled()) {
+        if (isAdmin && WindowsFeatures.isEnabled(WindowsFeatures.HYPER_V)) {
             log.info("Running with admin privileges and Hyper-V enabled. Using hyperv driver.");
             startWithDriver("hyperv");
         } else {
@@ -196,42 +198,6 @@ public class WindowsKubernetesProvider extends KubernetesProvider {
 
         log.info("Kubernetes cluster started (instance: {}, profile: {}, driver: {})",
                 instanceId, profileName, driver);
-    }
-
-    private boolean isHyperVEnabled() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-Command",
-                    "(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V).State");
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            byte[] output = readAllBytes(process.getInputStream());
-            boolean completed = process.waitFor(30, TimeUnit.SECONDS);
-            if (!completed) {
-                process.destroyForcibly();
-                return false;
-            }
-            return process.exitValue() == 0 && new String(output).trim().equals("Enabled");
-        } catch (IOException | InterruptedException e) {
-            log.debug("Hyper-V check failed: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    private boolean isAdministrator() {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("net", "session");
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            readAllBytes(process.getInputStream());
-            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
-            if (!completed) {
-                process.destroyForcibly();
-                return false;
-            }
-            return process.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
-            return false;
-        }
     }
 
     @Override
