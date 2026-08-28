@@ -1,4 +1,4 @@
-# 
+# Kubernetes Java
 
 Archives containing JAR files are available as [releases](https://github.com/intisy/kubernetes-java/releases).
 
@@ -8,7 +8,7 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
 
 ## Usage in private projects
 
- * Maven (inside the  file)
+ * Maven (inside the `pom.xml` file)
 ```xml
   <repository>
       <id>github</id>
@@ -18,11 +18,11 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
   <dependency>
       <groupId>io.github.intisy</groupId>
       <artifactId>kubernetes-java</artifactId>
-      <version>1.0.5.4</version>
+      <version>1.0.5.5</version>
   </dependency>
 ```
 
- * Maven (inside the  file)
+ * Maven (inside the `settings.xml` file)
 ```xml
   <servers>
       <server>
@@ -33,7 +33,7 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
   </servers>
 ```
 
- * Gradle (inside the  or  file)
+ * Gradle (inside the `build.gradle.kts` or `build.gradle` file)
 ```groovy
   repositories {
       maven {
@@ -45,19 +45,19 @@ Kubernetes-java provides a standalone Kubernetes cluster for Java using Minikube
       }
   }
   dependencies {
-      implementation 'io.github.intisy:kubernetes-java:1.0.5.4'
+      implementation 'io.github.intisy:kubernetes-java:1.0.5.5'
   }
 ```
 
 ## Usage in public projects
 
- * Gradle (inside the  or  file)
+ * Gradle (inside the `build.gradle.kts` or `build.gradle` file)
 ```groovy
   plugins {
       id "io.github.intisy.github-gradle" version "1.3.7"
   }
   dependencies {
-      githubImplementation "intisy:kubernetes-java:1.0.5.4"
+      githubImplementation "intisy:kubernetes-java:1.0.5.5"
   }
 ```
 
