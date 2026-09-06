@@ -29,6 +29,8 @@ import io.github.intisy.kubernetes.command.serviceaccount.*;
 import io.github.intisy.kubernetes.command.statefulset.*;
 import io.github.intisy.kubernetes.command.storageclass.*;
 import io.github.intisy.kubernetes.command.system.*;
+import io.github.intisy.kubernetes.apply.ManifestApply;
+import io.github.intisy.kubernetes.apply.ResourceResolver;
 import io.github.intisy.kubernetes.config.KubeConfig;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
@@ -69,9 +71,11 @@ public class KubernetesClient implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(KubernetesClient.class);
 
     private final KubernetesHttpClient httpClient;
+    private final ManifestApply manifestApply;
 
     private KubernetesClient(KubernetesHttpClient httpClient) {
         this.httpClient = httpClient;
+        this.manifestApply = new ManifestApply(httpClient, new ResourceResolver(httpClient));
     }
 
     public static Builder builder() {
@@ -85,6 +89,11 @@ public class KubernetesClient implements Closeable {
                 .withClientCertPem(config.clientCertPem())
                 .withClientKeyPem(config.clientKeyPem())
                 .build();
+    }
+
+
+    public void applyYaml(String yaml) throws IOException {
+        manifestApply.applyYaml(yaml);
     }
 
 

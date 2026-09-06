@@ -173,8 +173,13 @@ public class KubernetesHttpClient implements Closeable {
         return request("PUT", path, jsonBody);
     }
 
+    public KubernetesResponse patch(String path, Map<String, String> queryParams,
+                                     String body, String contentType) throws IOException {
+        return patchRequest(buildPathWithQuery(path, queryParams), body, contentType);
+    }
+
     public KubernetesResponse patch(String path, String jsonBody) throws IOException {
-        return patchRequest(path, jsonBody);
+        return patchRequest(path, jsonBody, "application/strategic-merge-patch+json");
     }
 
     public KubernetesResponse delete(String path) throws IOException {
@@ -268,7 +273,7 @@ public class KubernetesHttpClient implements Closeable {
         return new KubernetesResponse(statusCode, headers, responseBody);
     }
 
-    private KubernetesResponse patchRequest(String path, String body) throws IOException {
+    private KubernetesResponse patchRequest(String path, String body, String contentType) throws IOException {
         log.trace("PATCH {}", path);
         URL url = new URL(apiServerUrl + path);
 
@@ -290,7 +295,7 @@ public class KubernetesHttpClient implements Closeable {
         conn.setConnectTimeout(timeout);
         conn.setReadTimeout(timeout);
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("Content-Type", "application/strategic-merge-patch+json");
+        conn.setRequestProperty("Content-Type", contentType);
 
         if (bearerToken != null) {
             conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
