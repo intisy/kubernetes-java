@@ -29,6 +29,7 @@ import io.github.intisy.kubernetes.command.serviceaccount.*;
 import io.github.intisy.kubernetes.command.statefulset.*;
 import io.github.intisy.kubernetes.command.storageclass.*;
 import io.github.intisy.kubernetes.command.system.*;
+import io.github.intisy.kubernetes.config.KubeConfig;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
 import org.slf4j.Logger;
@@ -72,6 +73,15 @@ public class KubernetesClient implements Closeable {
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    public static KubernetesClient fromKubeConfig(KubeConfig config) {
+        return builder()
+                .withApiServer(config.server())
+                .withCaCertPem(config.caCertPem())
+                .withClientCertPem(config.clientCertPem())
+                .withClientKeyPem(config.clientKeyPem())
+                .build();
     }
 
 
@@ -532,6 +542,10 @@ public class KubernetesClient implements Closeable {
         private String caCertPath;
         private String clientCertPath;
         private String clientKeyPath;
+        private String caCertPem;
+        private String clientCertPem;
+        private String clientKeyPem;
+        private boolean insecureTrustAll;
         private int timeout = 30000;
 
         private Builder() {
@@ -562,11 +576,37 @@ public class KubernetesClient implements Closeable {
             return this;
         }
 
+        public Builder withCaCertPem(String caCertPem) {
+            this.caCertPem = caCertPem;
+            return this;
+        }
+
+        public Builder withClientCertPem(String clientCertPem) {
+            this.clientCertPem = clientCertPem;
+            return this;
+        }
+
+        public Builder withClientKeyPem(String clientKeyPem) {
+            this.clientKeyPem = clientKeyPem;
+            return this;
+        }
+
+        public Builder withInsecureTrustAll(boolean insecureTrustAll) {
+            this.insecureTrustAll = insecureTrustAll;
+            return this;
+        }
+
         public Builder withTimeout(int timeoutMs) {
             this.timeout = timeoutMs;
             return this;
         }
 
+        /**
+         * @implNote PEM content is preferred over a path when both are set, since PEM content is
+         * what {@link #fromKubeConfig} supplies and a caller that sets both almost certainly means
+         * the PEM to win. Every branch here mirrors the pre-PEM behavior when no PEM is set, so
+         * existing path-based and bearer-token callers are unaffected.
+         */
         public KubernetesClient build() {
             if (apiServerUrl == null) {
                 apiServerUrl = "https://localhost:8443";
@@ -575,9 +615,17 @@ public class KubernetesClient implements Closeable {
 
             KubernetesHttpClient httpClient;
             if (bearerToken != null) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPath, timeout);
+                if (caCertPem != null) {
+                    httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPem, timeout, insecureTrustAll);
+                } else {
+                    httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPath, timeout);
+                }
+            } else if (clientCertPem != null && clientKeyPem != null) {
+                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPem, clientCertPem, clientKeyPem, timeout, insecureTrustAll);
             } else if (clientCertPath != null && clientKeyPath != null) {
                 httpClient = new KubernetesHttpClient(apiServerUrl, caCertPath, clientCertPath, clientKeyPath, timeout);
+            } else if (insecureTrustAll) {
+                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPem, null, null, timeout, true);
             } else {
                 httpClient = new KubernetesHttpClient(apiServerUrl, timeout);
             }
