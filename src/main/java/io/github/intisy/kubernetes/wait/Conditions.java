@@ -50,6 +50,11 @@ public final class Conditions {
      * counterpart absent, and that is a completed rollout, not an incomplete one. Only a pair
      * whose primary key ({@code replicas} or {@code desiredNumberScheduled}) is missing entirely
      * reads as incomplete, since that is what an object with no status yet looks like.
+     * <p>
+     * The replica target is {@code spec.replicas} when the object carries one, matching
+     * {@code kubectl rollout status}. Reading {@code status.replicas} instead is what a freshly
+     * created workload publishes before any pod exists, so a caller polling a cold object would be
+     * told a rollout that has not started is complete.
      */
     public static boolean isRolloutComplete(String statusJson) {
         JsonObject root = parse(statusJson);
@@ -65,6 +70,10 @@ public final class Conditions {
         if (status.has("desiredNumberScheduled") || status.has("numberReady")) {
             return status.has("desiredNumberScheduled")
                     && longAt(status, "numberReady") >= longAt(status, "desiredNumberScheduled");
+        }
+        JsonObject spec = objectAt(root, "spec");
+        if (spec != null && spec.has("replicas")) {
+            return longAt(status, "readyReplicas") >= longAt(spec, "replicas");
         }
         return status.has("replicas")
                 && longAt(status, "readyReplicas") >= longAt(status, "replicas");

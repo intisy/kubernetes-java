@@ -74,6 +74,32 @@ class ConditionsTest {
                 + "\"status\":{\"observedGeneration\":1,\"desiredNumberScheduled\":0}}"));
     }
 
+    /**
+     * @implNote the case that made this compare against the spec: a workload the controller has
+     * only just acknowledged publishes observedGeneration with replicas 0 and no readyReplicas at
+     * all, which read against status alone is indistinguishable from a rollout that finished.
+     */
+    @Test
+    void rolloutIncompleteWhenTheSpecWantsReplicasThatDoNotExistYet() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
+                + "\"spec\":{\"replicas\":1},"
+                + "\"status\":{\"observedGeneration\":1,\"replicas\":0}}"));
+    }
+
+    @Test
+    void rolloutCompleteWhenTheSpecIsSatisfiedEvenWhileStatusReplicasLagBehind() {
+        assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
+                + "\"spec\":{\"replicas\":1},"
+                + "\"status\":{\"observedGeneration\":1,\"replicas\":2,\"readyReplicas\":1}}"));
+    }
+
+    @Test
+    void rolloutCompleteWhenTheSpecScalesToZero() {
+        assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
+                + "\"spec\":{\"replicas\":0},"
+                + "\"status\":{\"observedGeneration\":1}}"));
+    }
+
     @Test
     void rolloutIncompleteWhenNoReplicaCountsAreReportedAtAll() {
         assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
