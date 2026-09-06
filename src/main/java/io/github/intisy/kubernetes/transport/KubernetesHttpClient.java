@@ -67,7 +67,7 @@ public class KubernetesHttpClient implements Closeable {
 
         SSLSocketFactory factory;
         HostnameVerifier verifier;
-        if (!insecureTrustAll && caCertPem != null) {
+        if (!insecureTrustAll && (caCertPem != null || clientCertPem != null || clientKeyPem != null)) {
             try {
                 factory = createSslSocketFactory(caCertPem, clientCertPem, clientKeyPem);
                 verifier = createHostnameVerifier();
@@ -383,18 +383,25 @@ public class KubernetesHttpClient implements Closeable {
         }
     }
 
+    /**
+     * @implNote {@code caCertPem} is optional here: a caller supplying only a client
+     * certificate and key (no CA) still gets real server verification, via the JVM's default
+     * trust store, rather than being silently pushed onto the insecure path.
+     */
     private SSLSocketFactory createSslSocketFactory(String caCertPem, String clientCertPem, String clientKeyPem) throws Exception {
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-
-        KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
-        trustStore.load(null, null);
-        try (InputStream caInput = new ByteArrayInputStream(caCertPem.getBytes(StandardCharsets.UTF_8))) {
-            X509Certificate caCert = (X509Certificate) cf.generateCertificate(caInput);
-            trustStore.setCertificateEntry("ca", caCert);
+        TrustManager[] trustManagers = null;
+        if (caCertPem != null) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+            trustStore.load(null, null);
+            try (InputStream caInput = new ByteArrayInputStream(caCertPem.getBytes(StandardCharsets.UTF_8))) {
+                X509Certificate caCert = (X509Certificate) cf.generateCertificate(caInput);
+                trustStore.setCertificateEntry("ca", caCert);
+            }
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+            trustManagers = tmf.getTrustManagers();
         }
-
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init(trustStore);
 
         KeyManager[] keyManagers = null;
         if (clientCertPem != null && clientKeyPem != null) {
@@ -402,7 +409,7 @@ public class KubernetesHttpClient implements Closeable {
         }
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(keyManagers, tmf.getTrustManagers(), null);
+        sslContext.init(keyManagers, trustManagers, null);
         return sslContext.getSocketFactory();
     }
 

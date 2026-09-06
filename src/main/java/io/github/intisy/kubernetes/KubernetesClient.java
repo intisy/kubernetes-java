@@ -37,6 +37,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * Kubernetes client for communicating with the Kubernetes API server.
@@ -602,10 +605,12 @@ public class KubernetesClient implements Closeable {
         }
 
         /**
-         * @implNote PEM content is preferred over a path when both are set, since PEM content is
-         * what {@link #fromKubeConfig} supplies and a caller that sets both almost certainly means
-         * the PEM to win. Every branch here mirrors the pre-PEM behavior when no PEM is set, so
-         * existing path-based and bearer-token callers are unaffected.
+         * @implNote Paths are read into PEM content here and every combination is routed through
+         * the PEM-taking constructors, rather than branching between path-based and PEM-based
+         * constructors. A caller supplying only a CA (PEM or path), or only a client cert and key
+         * with no CA, must reach real TLS verification, not the insecure fallback; keeping one
+         * code path here is what makes that (and {@code withInsecureTrustAll}) apply uniformly
+         * regardless of whether the caller used the path-based or PEM-based builder methods.
          */
         public KubernetesClient build() {
             if (apiServerUrl == null) {
@@ -613,23 +618,32 @@ public class KubernetesClient implements Closeable {
             }
             log.debug("Building KubernetesClient for server: {}", apiServerUrl);
 
+            String effectiveCaCertPem = caCertPem != null ? caCertPem : readPemFile(caCertPath);
+            String effectiveClientCertPem = clientCertPem != null ? clientCertPem : readPemFile(clientCertPath);
+            String effectiveClientKeyPem = clientKeyPem != null ? clientKeyPem : readPemFile(clientKeyPath);
+
+            if ((effectiveClientCertPem == null) != (effectiveClientKeyPem == null)) {
+                throw new IllegalStateException("client certificate and client key must both be supplied, or neither");
+            }
+
             KubernetesHttpClient httpClient;
             if (bearerToken != null) {
-                if (caCertPem != null) {
-                    httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPem, timeout, insecureTrustAll);
-                } else {
-                    httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPath, timeout);
-                }
-            } else if (clientCertPem != null && clientKeyPem != null) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPem, clientCertPem, clientKeyPem, timeout, insecureTrustAll);
-            } else if (clientCertPath != null && clientKeyPath != null) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPath, clientCertPath, clientKeyPath, timeout);
-            } else if (insecureTrustAll) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPem, null, null, timeout, true);
+                httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, effectiveCaCertPem, timeout, insecureTrustAll);
             } else {
-                httpClient = new KubernetesHttpClient(apiServerUrl, timeout);
+                httpClient = new KubernetesHttpClient(apiServerUrl, effectiveCaCertPem, effectiveClientCertPem, effectiveClientKeyPem, timeout, insecureTrustAll);
             }
             return new KubernetesClient(httpClient);
+        }
+
+        private static String readPemFile(String path) {
+            if (path == null) {
+                return null;
+            }
+            try {
+                return new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to read PEM file at " + path, e);
+            }
         }
     }
 }
