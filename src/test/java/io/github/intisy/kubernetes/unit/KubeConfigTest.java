@@ -2,10 +2,13 @@ package io.github.intisy.kubernetes.unit;
 
 import io.github.intisy.kubernetes.config.KubeConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,6 +44,47 @@ class KubeConfigTest {
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> KubeConfig.parseString(withoutContext));
         assertEquals("kubeconfig has no context named 'nope'", thrown.getMessage());
+    }
+
+    @Test
+    void readsMaterialFromAFilePathWhenItIsNotInlined(@TempDir Path directory) throws Exception {
+        Path caFile = directory.resolve("ca.pem");
+        Files.write(caFile, "CA-FROM-FILE".getBytes(StandardCharsets.UTF_8));
+        String withPath = fixture("kubeconfig-talos.yaml")
+                .replace("certificate-authority-data: Q0EtUEVN",
+                        "certificate-authority: " + caFile.toString().replace("\\", "/"));
+
+        KubeConfig config = KubeConfig.parseString(withPath);
+
+        assertEquals("CA-FROM-FILE", config.caCertPem());
+        assertEquals("CERT-PEM", config.clientCertPem());
+    }
+
+    @Test
+    void failsLoudlyWhenAReferencedFileCannotBeRead(@TempDir Path directory) throws Exception {
+        String absent = directory.resolve("missing.pem").toString().replace("\\", "/");
+        String withPath = fixture("kubeconfig-talos.yaml")
+                .replace("certificate-authority-data: Q0EtUEVN", "certificate-authority: " + absent);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> KubeConfig.parseString(withPath));
+        assertEquals("kubeconfig references '" + absent + "' which cannot be read", thrown.getMessage());
+    }
+
+    /**
+     * @implNote a duplicate name makes the file ambiguous about which credential the context means,
+     * and picking one silently can hand a client the wrong certificate for the wrong cluster.
+     */
+    @Test
+    void failsLoudlyWhenTwoClustersShareAName() throws Exception {
+        String duplicated = fixture("kubeconfig-talos.yaml")
+                .replace("clusters:", "clusters:\n- cluster:\n    server: https://impostor:6443\n"
+                        + "  name: talos-default");
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> KubeConfig.parseString(duplicated));
+        assertEquals("kubeconfig has more than one entry named 'talos-default' under 'clusters'",
+                thrown.getMessage());
     }
 
     @Test
