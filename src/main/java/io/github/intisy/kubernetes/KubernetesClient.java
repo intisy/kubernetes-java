@@ -607,10 +607,14 @@ public class KubernetesClient implements Closeable {
         /**
          * @implNote Paths are read into PEM content here and every combination is routed through
          * the PEM-taking constructors, rather than branching between path-based and PEM-based
-         * constructors. A caller supplying only a CA (PEM or path), or only a client cert and key
-         * with no CA, must reach real TLS verification, not the insecure fallback; keeping one
-         * code path here is what makes that (and {@code withInsecureTrustAll}) apply uniformly
-         * regardless of whether the caller used the path-based or PEM-based builder methods.
+         * constructors. A caller supplying only a CA (PEM or path) must reach real TLS
+         * verification, not the insecure fallback; keeping one code path here is what makes that
+         * (and {@code withInsecureTrustAll}) apply uniformly regardless of whether the caller
+         * used the path-based or PEM-based builder methods. A client cert and key with no CA is
+         * rejected rather than falling back to the JVM's system trust store: a Kubernetes
+         * cluster's CA is essentially never in that store, so that fallback would only defer the
+         * same failure to first request, as a bare PKIX error with no hint that a CA or
+         * {@code withInsecureTrustAll} exists.
          */
         public KubernetesClient build() {
             if (apiServerUrl == null) {
@@ -624,6 +628,11 @@ public class KubernetesClient implements Closeable {
 
             if ((effectiveClientCertPem == null) != (effectiveClientKeyPem == null)) {
                 throw new IllegalStateException("client certificate and client key must both be supplied, or neither");
+            }
+            if (effectiveClientCertPem != null && effectiveCaCertPem == null && !insecureTrustAll) {
+                throw new IllegalStateException("client certificate supplied without a CA certificate; the server cannot be verified, "
+                        + "pass withCaCertPem or withCaCert to verify against your cluster's CA, "
+                        + "or withInsecureTrustAll(true) to accept an unverified connection deliberately");
             }
 
             KubernetesHttpClient httpClient;

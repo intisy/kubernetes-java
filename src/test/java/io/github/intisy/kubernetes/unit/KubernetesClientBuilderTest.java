@@ -73,8 +73,25 @@ public class KubernetesClientBuilderTest {
     }
 
     @Test
-    @DisplayName(".withClientCert(path).withClientKey(path) with no CA still verifies the credentials and succeeds")
-    void testWithClientCertAndKey(@TempDir Path tempDir) throws Exception {
+    @DisplayName(".withClientCert(path).withClientKey(path) with no CA fails loudly naming the escape hatches, instead of silently trusting the system store")
+    void testWithClientCertAndKeyWithNoCaFailsLoudly(@TempDir Path tempDir) throws Exception {
+        Path certFile = tempDir.resolve("client.crt");
+        Path keyFile = tempDir.resolve("client.key");
+        Files.write(certFile, fixture("tls-cert.pem"));
+        Files.write(keyFile, fixture("tls-key-sec1.pem"));
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () ->
+                KubernetesClient.builder()
+                        .withClientCert(certFile.toString())
+                        .withClientKey(keyFile.toString())
+                        .build());
+        assertTrue(thrown.getMessage().contains("withCaCertPem"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("withInsecureTrustAll"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName(".withClientCert(path).withClientKey(path).withInsecureTrustAll(true) with no CA succeeds")
+    void testWithClientCertAndKeyAndInsecureTrustAllSucceeds(@TempDir Path tempDir) throws Exception {
         Path certFile = tempDir.resolve("client.crt");
         Path keyFile = tempDir.resolve("client.key");
         Files.write(certFile, fixture("tls-cert.pem"));
@@ -83,21 +100,25 @@ public class KubernetesClientBuilderTest {
         KubernetesClient client = KubernetesClient.builder()
                 .withClientCert(certFile.toString())
                 .withClientKey(keyFile.toString())
+                .withInsecureTrustAll(true)
                 .build();
         assertNotNull(client);
     }
 
     @Test
-    @DisplayName(".withClientCert(path).withClientKey(path) fails loudly when the key cannot be parsed, instead of silently dropping the credentials")
+    @DisplayName(".withCaCert(path).withClientCert(path).withClientKey(path) fails loudly when the key cannot be parsed, instead of silently dropping the credentials")
     void testWithClientCertAndKeyFailsLoudlyOnAnUnparsableKey(@TempDir Path tempDir) throws Exception {
+        Path caFile = tempDir.resolve("ca.pem");
         Path certFile = tempDir.resolve("client.crt");
         Path keyFile = tempDir.resolve("client.key");
+        Files.write(caFile, fixture("tls-cert.pem"));
         Files.write(certFile, fixture("tls-cert.pem"));
         Files.write(keyFile, "-----BEGIN EC PRIVATE KEY-----\nnot a key\n-----END EC PRIVATE KEY-----"
                 .getBytes(StandardCharsets.UTF_8));
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, () ->
                 KubernetesClient.builder()
+                        .withCaCert(caFile.toString())
                         .withClientCert(certFile.toString())
                         .withClientKey(keyFile.toString())
                         .build());
