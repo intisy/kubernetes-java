@@ -1,12 +1,16 @@
 package io.github.intisy.kubernetes.unit;
 
 import io.github.intisy.kubernetes.exec.ExecChannels;
+import io.github.intisy.kubernetes.exec.ExecIncompleteException;
 import io.github.intisy.kubernetes.exec.ExecResult;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExecChannelsTest {
     private byte[] frame(int channel, String payload) {
@@ -62,8 +66,35 @@ class ExecChannelsTest {
     void treatsAnEmptyFrameAsAKeepAliveRatherThanData() {
         ExecChannels channels = new ExecChannels();
 
+        channels.accept(frame(1, "spisor-1b1-probe"));
         channels.accept(new byte[]{(byte) 1});
 
-        assertEquals("", channels.result().stdout());
+        assertEquals("spisor-1b1-probe", channels.result().stdout());
+    }
+
+    @Test
+    void requireCompletedResultReturnsTheRealExitCodeOnceAStatusFrameArrived() throws Exception {
+        ExecChannels channels = new ExecChannels();
+
+        channels.accept(frame(1, "row-count: 1\n"));
+        channels.accept(frame(3, "{\"status\":\"Success\"}"));
+
+        assertTrue(channels.isCompleted());
+        ExecResult result = channels.requireCompletedResult("should not be used");
+        assertEquals(0, result.exitCode());
+        assertEquals("row-count: 1\n", result.stdout());
+    }
+
+    @Test
+    void requireCompletedResultThrowsWhenNoStatusFrameEverArrived() {
+        ExecChannels channels = new ExecChannels();
+
+        channels.accept(frame(1, "partial"));
+
+        assertFalse(channels.isCompleted());
+        ExecIncompleteException exception = assertThrows(ExecIncompleteException.class,
+                () -> channels.requireCompletedResult("timed out waiting for the pod"));
+        assertEquals("timed out waiting for the pod", exception.getMessage());
+        assertEquals("partial", exception.partialStdout());
     }
 }

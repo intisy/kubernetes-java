@@ -20,6 +20,7 @@ public class ExecChannels {
     private final StringBuilder stdout = new StringBuilder();
     private final StringBuilder stderr = new StringBuilder();
     private int exitCode = 0;
+    private boolean completed = false;
 
     /**
      * @implNote A frame of length 1 carries only the channel byte and no payload: it is the
@@ -36,12 +37,38 @@ public class ExecChannels {
         } else if (channel == CHANNEL_STDERR) {
             stderr.append(payload);
         } else if (channel == CHANNEL_ERROR) {
-            exitCode = exitCodeFromStatus(payload);
+            completed = true;
+            try {
+                exitCode = exitCodeFromStatus(payload);
+            } catch (RuntimeException e) {
+                exitCode = 1;
+            }
         }
+    }
+
+    /**
+     * @implNote True only once a channel-3 status frame was actually parsed. Kubernetes sends
+     * that frame last, after the command finishes, so a session that ends any other way (closed
+     * early, timed out, interrupted) must not be mistaken for a genuine exit 0.
+     */
+    public boolean isCompleted() {
+        return completed;
     }
 
     public ExecResult result() {
         return new ExecResult(stdout.toString(), stderr.toString(), exitCode);
+    }
+
+    /**
+     * @implNote The only way {@link PodExec} is allowed to obtain a result: a session that ended
+     * without ever parsing a terminal status has an unknown exit code, and returning 0 there
+     * would report success for a command whose outcome was never observed.
+     */
+    public ExecResult requireCompletedResult(String reasonIfIncomplete) throws ExecIncompleteException {
+        if (!completed) {
+            throw new ExecIncompleteException(reasonIfIncomplete, stdout.toString(), stderr.toString());
+        }
+        return result();
     }
 
     /**

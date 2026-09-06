@@ -32,7 +32,7 @@ import io.github.intisy.kubernetes.command.system.*;
 import io.github.intisy.kubernetes.apply.ManifestApply;
 import io.github.intisy.kubernetes.apply.ResourceResolver;
 import io.github.intisy.kubernetes.config.KubeConfig;
-import io.github.intisy.kubernetes.exception.KubernetesException;
+import io.github.intisy.kubernetes.exec.ExecFailedException;
 import io.github.intisy.kubernetes.exec.ExecResult;
 import io.github.intisy.kubernetes.exec.PodExec;
 import io.github.intisy.kubernetes.model.*;
@@ -131,18 +131,23 @@ public class KubernetesClient implements Closeable {
     }
 
     /**
-     * Runs {@code command} in {@code pod}, the replacement for {@code kubectl exec}.
+     * Runs {@code command} in {@code pod}, the replacement for {@code kubectl exec}, waiting up
+     * to {@link PodExec#DEFAULT_SESSION_TIMEOUT_MILLIS} for it to finish.
      *
      * @implNote Throws on a non-zero exit rather than returning it silently: the consuming CLI
      * uses this to read files, run {@code psql}, and check metadata rows, so a failed command
      * must surface as a failure here just as it did as a failed {@code kubectl exec} process.
      */
     public ExecResult exec(String namespace, String pod, String[] command) throws IOException {
+        return exec(namespace, pod, command, PodExec.DEFAULT_SESSION_TIMEOUT_MILLIS);
+    }
+
+    public ExecResult exec(String namespace, String pod, String[] command, int sessionTimeoutMillis) throws IOException {
         PodExec podExec = new PodExec(httpClient.getApiServerUrl(), httpClient.getSslSocketFactory(),
-                httpClient.isVerifyHostname(), httpClient.getTimeout());
+                httpClient.isVerifyHostname(), httpClient.getTimeout(), sessionTimeoutMillis);
         ExecResult result = podExec.exec(namespace, pod, command);
         if (result.exitCode() != 0) {
-            throw new KubernetesException("command " + Arrays.toString(command) + " in pod " + namespace + "/" + pod
+            throw new ExecFailedException("command " + Arrays.toString(command) + " in pod " + namespace + "/" + pod
                     + " exited with code " + result.exitCode()
                     + "; stdout: " + result.stdout() + "; stderr: " + result.stderr(),
                     result.exitCode());
