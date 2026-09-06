@@ -34,6 +34,8 @@ import io.github.intisy.kubernetes.apply.ResourceResolver;
 import io.github.intisy.kubernetes.config.KubeConfig;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
+import io.github.intisy.kubernetes.transport.KubernetesResponse;
+import io.github.intisy.kubernetes.wait.Waiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +44,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.function.Predicate;
 
 /**
  * Kubernetes client for communicating with the Kubernetes API server.
@@ -72,10 +75,12 @@ public class KubernetesClient implements Closeable {
 
     private final KubernetesHttpClient httpClient;
     private final ManifestApply manifestApply;
+    private final ResourceResolver resourceResolver;
 
     private KubernetesClient(KubernetesHttpClient httpClient) {
         this.httpClient = httpClient;
-        this.manifestApply = new ManifestApply(httpClient, new ResourceResolver(httpClient));
+        this.resourceResolver = new ResourceResolver(httpClient);
+        this.manifestApply = new ManifestApply(httpClient, resourceResolver);
     }
 
     public static Builder builder() {
@@ -94,6 +99,31 @@ public class KubernetesClient implements Closeable {
 
     public void applyYaml(String yaml) throws IOException {
         manifestApply.applyYaml(yaml);
+    }
+
+    /**
+     * Polls the resource's status document every 2 seconds until the predicate holds or
+     * {@code timeoutMillis} passes, the replacement for {@code kubectl wait} and
+     * {@code kubectl rollout status}. Use {@link io.github.intisy.kubernetes.wait.Conditions#isReady}
+     * for a Pod or a CloudNativePG {@code Cluster}, and {@link io.github.intisy.kubernetes.wait.Conditions#isRolloutComplete}
+     * for a Deployment, DaemonSet or StatefulSet.
+     */
+    public void waitFor(final String apiVersion, final String kind, final String namespace, final String name,
+                         Predicate<String> predicate, long timeoutMillis) throws IOException {
+        String plural = resourceResolver.resolvePlural(apiVersion, kind);
+        final String path = ManifestApply.resourcePath(apiVersion, plural, namespace, name);
+        Waiter waiter = new Waiter(new Waiter.Fetcher() {
+            @Override
+            public String fetch() throws IOException {
+                KubernetesResponse response = httpClient.get(path);
+                if (!response.isSuccessful()) {
+                    throw new IOException("failed to fetch " + kind + " " + name + " at " + path
+                            + ": HTTP " + response.getStatusCode() + ": " + response.getBody());
+                }
+                return response.getBody();
+            }
+        });
+        waiter.waitFor(kind, namespace, name, predicate, timeoutMillis);
     }
 
 
