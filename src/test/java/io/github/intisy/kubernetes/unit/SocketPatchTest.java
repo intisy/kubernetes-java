@@ -4,6 +4,12 @@ import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
 import io.github.intisy.kubernetes.transport.KubernetesResponse;
 import org.junit.jupiter.api.Test;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLServerSocketFactory;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
@@ -12,6 +18,14 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -21,6 +35,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SocketPatchTest {
@@ -118,6 +133,89 @@ class SocketPatchTest {
         }
     }
 
+    @Test
+    void httpsInsecureClientReachesASelfSignedServerAndSendsPatchNotPost() throws Exception {
+        try (FakeServer server = new FakeServer(sslServerSocket())) {
+            server.respondWith(cannedResponse(200, "OK", "application/json", "{\"status\":\"ok\"}"));
+            KubernetesHttpClient client = new KubernetesHttpClient(
+                    "https://localhost:" + server.port(), null, null, TIMEOUT_MS, true);
+
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("fieldManager", "kubernetes-java");
+            KubernetesResponse response = client.patch("/api/v1/namespaces/demo", query,
+                    "{\"spec\":true}", "application/apply-patch+yaml");
+
+            String request = server.awaitRequest();
+            assertTrue(request.startsWith("PATCH /api/v1/namespaces/demo?fieldManager=kubernetes-java HTTP/1.1\r\n"),
+                    "expected the server to see PATCH over HTTPS, not POST; got: " + firstLine(request));
+            assertEquals("application/apply-patch+yaml", header(request, "Content-Type"));
+            assertEquals(200, response.getStatusCode());
+            assertEquals("{\"status\":\"ok\"}", response.getBody());
+        }
+    }
+
+    @Test
+    void httpsVerifyingClientDoesNotSilentlyAcceptAnUntrustedServerIdentity() throws Exception {
+        try (FakeServer server = new FakeServer(sslServerSocket())) {
+            server.respondWith(cannedResponse(200, "OK", "application/json", "{}"));
+            KubernetesHttpClient client = new KubernetesHttpClient(
+                    "https://localhost:" + server.port(), null, fixture("tls-cert.pem"), TIMEOUT_MS, false);
+
+            Throwable thrown = assertThrows(IOException.class, () -> client.patch("/api/v1/namespaces/demo", "{}"),
+                    "a verifying client must not silently accept a server whose identity does not match localhost");
+            assertTrue(thrown instanceof SSLException,
+                    "expected an SSLException from failed trust or hostname verification, got: " + thrown);
+        }
+    }
+
+    private static final int TIMEOUT_MS = 5000;
+
+    private static SSLServerSocket sslServerSocket() throws Exception {
+        X509Certificate cert = parseCertificate(fixture("tls-cert.pem"));
+        PrivateKey privateKey = parsePkcs8EcPrivateKey(fixture("tls-key-pkcs8.pem"));
+
+        char[] password = "changeit".toCharArray();
+        KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+        keyStore.load(null, null);
+        keyStore.setKeyEntry("server", privateKey, password, new Certificate[]{cert});
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, password);
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), null, null);
+
+        SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
+        return (SSLServerSocket) factory.createServerSocket(0);
+    }
+
+    private static X509Certificate parseCertificate(String pem) throws Exception {
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        try (InputStream in = new ByteArrayInputStream(pem.getBytes(StandardCharsets.UTF_8))) {
+            return (X509Certificate) cf.generateCertificate(in);
+        }
+    }
+
+    private static PrivateKey parsePkcs8EcPrivateKey(String pem) throws Exception {
+        String base64 = pem.replaceAll("-----BEGIN [A-Z ]+-----", "")
+                .replaceAll("-----END [A-Z ]+-----", "")
+                .replaceAll("\\s", "");
+        byte[] keyBytes = Base64.getDecoder().decode(base64);
+        return KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
+    }
+
+    private static String fixture(String resource) throws IOException {
+        try (InputStream in = SocketPatchTest.class.getClassLoader().getResourceAsStream(resource)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        }
+    }
+
     private static byte[] cannedResponse(int statusCode, String reason, String contentType, String body) {
         byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
         String head = "HTTP/1.1 " + statusCode + " " + reason + "\r\n"
@@ -158,7 +256,11 @@ class SocketPatchTest {
         private Future<String> requestFuture;
 
         FakeServer() throws IOException {
-            serverSocket = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+            this(new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")));
+        }
+
+        FakeServer(ServerSocket serverSocket) {
+            this.serverSocket = serverSocket;
         }
 
         int port() {
