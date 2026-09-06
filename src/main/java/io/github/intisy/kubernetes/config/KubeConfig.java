@@ -63,19 +63,29 @@ public final class KubeConfig {
                 material(user, "client-key"));
     }
 
+    /**
+     * @implNote refuses a duplicate name rather than taking the first match. Two clusters or two
+     * users sharing a name means the file cannot say which credential belongs to the context, and
+     * silently choosing one can point a client at the wrong cluster with the wrong certificate.
+     */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> named(Map<String, Object> root, String listKey, String name, String innerKey) {
         Object list = root.get(listKey);
         if (!(list instanceof List)) {
             return null;
         }
+        Map<String, Object> found = null;
         for (Object element : (List<Object>) list) {
             Map<String, Object> entry = (Map<String, Object>) element;
             if (name.equals(entry.get("name"))) {
-                return (Map<String, Object>) entry.get(innerKey);
+                if (found != null) {
+                    throw new IllegalStateException("kubeconfig has more than one entry named '" + name
+                            + "' under '" + listKey + "'");
+                }
+                found = (Map<String, Object>) entry.get(innerKey);
             }
         }
-        return null;
+        return found;
     }
 
     private static String material(Map<String, Object> holder, String key) {
