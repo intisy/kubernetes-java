@@ -32,6 +32,8 @@ import io.github.intisy.kubernetes.command.system.*;
 import io.github.intisy.kubernetes.apply.ManifestApply;
 import io.github.intisy.kubernetes.apply.ResourceResolver;
 import io.github.intisy.kubernetes.config.KubeConfig;
+import io.github.intisy.kubernetes.exception.KubernetesException;
+import io.github.intisy.kubernetes.exception.NotFoundException;
 import io.github.intisy.kubernetes.exec.ExecFailedException;
 import io.github.intisy.kubernetes.exec.ExecResult;
 import io.github.intisy.kubernetes.exec.PodExec;
@@ -114,20 +116,53 @@ public class KubernetesClient implements Closeable {
      */
     public void waitFor(final String apiVersion, final String kind, final String namespace, final String name,
                          Predicate<String> predicate, long timeoutMillis) throws IOException {
-        String plural = resourceResolver.resolvePlural(apiVersion, kind);
-        final String path = ManifestApply.resourcePath(apiVersion, plural, namespace, name);
+        final String path = resourcePath(apiVersion, kind, namespace, name);
         Waiter waiter = new Waiter(new Waiter.Fetcher() {
             @Override
             public String fetch() throws IOException {
-                KubernetesResponse response = httpClient.get(path);
-                if (!response.isSuccessful()) {
-                    throw new Waiter.FetchFailedException("failed to fetch " + kind + " " + name + " at " + path
-                            + ": HTTP " + response.getStatusCode() + ": " + response.getBody(), response.getStatusCode());
-                }
-                return response.getBody();
+                return fetchAt(path, kind, name);
             }
         });
         waiter.waitFor(kind, namespace, name, predicate, timeoutMillis);
+    }
+
+    /**
+     * Reads a resource's current document once, the replacement for {@code kubectl get -o json}.
+     * Use it to report on a resource; use {@link #waitFor} to block until one becomes ready.
+     *
+     * @throws NotFoundException if the resource does not exist
+     * @throws KubernetesException if the read fails for any other reason
+     */
+    public String fetchResource(String apiVersion, String kind, String namespace, String name) {
+        try {
+            return fetchAt(resourcePath(apiVersion, kind, namespace, name), kind, name);
+        } catch (Waiter.FetchFailedException e) {
+            if (e.getStatusCode() == 404) {
+                throw new NotFoundException(e.getMessage(), e);
+            }
+            throw new KubernetesException(e.getMessage(), e.getStatusCode(), e);
+        } catch (IOException e) {
+            throw new KubernetesException("failed to fetch " + kind + " " + name, e);
+        }
+    }
+
+    private String resourcePath(String apiVersion, String kind, String namespace, String name) throws IOException {
+        return ManifestApply.resourcePath(apiVersion, resourceResolver.resolvePlural(apiVersion, kind), namespace, name);
+    }
+
+    /**
+     * @implNote signals a failed read as {@link Waiter.FetchFailedException} rather than a plain
+     * {@link IOException} because it carries the HTTP status code, which is what lets {@link Waiter}
+     * retry a transient server error but fail fast on a 401 or 403, and what lets
+     * {@link #fetchResource} recognise a 404.
+     */
+    private String fetchAt(String path, String kind, String name) throws IOException {
+        KubernetesResponse response = httpClient.get(path);
+        if (!response.isSuccessful()) {
+            throw new Waiter.FetchFailedException("failed to fetch " + kind + " " + name + " at " + path
+                    + ": HTTP " + response.getStatusCode() + ": " + response.getBody(), response.getStatusCode());
+        }
+        return response.getBody();
     }
 
     /**
