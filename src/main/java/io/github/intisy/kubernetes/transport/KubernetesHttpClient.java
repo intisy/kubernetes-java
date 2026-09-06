@@ -39,6 +39,7 @@ public class KubernetesHttpClient implements Closeable {
     private final int timeout;
     private final SSLSocketFactory sslSocketFactory;
     private final HostnameVerifier hostnameVerifier;
+    private final boolean verifyHostname;
     private final String bearerToken;
 
     /**
@@ -67,10 +68,12 @@ public class KubernetesHttpClient implements Closeable {
 
         SSLSocketFactory factory;
         HostnameVerifier verifier;
+        boolean secure;
         if (!insecureTrustAll && (caCertPem != null || clientCertPem != null || clientKeyPem != null)) {
             try {
                 factory = createSslSocketFactory(caCertPem, clientCertPem, clientKeyPem);
                 verifier = createHostnameVerifier();
+                secure = true;
             } catch (Exception e) {
                 throw new IllegalStateException("failed to build the TLS context for " + this.apiServerUrl
                         + "; pass withInsecureTrustAll(true) to accept an unverified server deliberately", e);
@@ -78,9 +81,11 @@ public class KubernetesHttpClient implements Closeable {
         } else {
             factory = createInsecureSslSocketFactory();
             verifier = createInsecureHostnameVerifier();
+            secure = false;
         }
         this.sslSocketFactory = factory;
         this.hostnameVerifier = verifier;
+        this.verifyHostname = secure;
 
         log.debug("Created KubernetesHttpClient for server: {}", this.apiServerUrl);
     }
@@ -93,10 +98,12 @@ public class KubernetesHttpClient implements Closeable {
 
         SSLSocketFactory factory;
         HostnameVerifier verifier;
+        boolean secure;
         if (!insecureTrustAll && caCertPem != null) {
             try {
                 factory = createSslSocketFactoryWithCa(caCertPem);
                 verifier = createHostnameVerifier();
+                secure = true;
             } catch (Exception e) {
                 throw new IllegalStateException("failed to build the TLS context for " + this.apiServerUrl
                         + "; pass withInsecureTrustAll(true) to accept an unverified server deliberately", e);
@@ -104,9 +111,11 @@ public class KubernetesHttpClient implements Closeable {
         } else {
             factory = createInsecureSslSocketFactory();
             verifier = createInsecureHostnameVerifier();
+            secure = false;
         }
         this.sslSocketFactory = factory;
         this.hostnameVerifier = verifier;
+        this.verifyHostname = secure;
 
         log.debug("Created KubernetesHttpClient with bearer token for server: {}", this.apiServerUrl);
     }
@@ -142,6 +151,33 @@ public class KubernetesHttpClient implements Closeable {
 
     public Gson getGson() {
         return gson;
+    }
+
+    public String getApiServerUrl() {
+        return apiServerUrl;
+    }
+
+    public int getTimeout() {
+        return timeout;
+    }
+
+    /**
+     * @implNote Exposed so a pod exec WebSocket connection, which this class cannot open itself
+     * (see {@link io.github.intisy.kubernetes.exec.PodExec}), can present the same client
+     * certificate this REST transport uses; without it, exec would authenticate differently from
+     * every other call and be rejected by the server.
+     */
+    public SSLSocketFactory getSslSocketFactory() {
+        return sslSocketFactory;
+    }
+
+    /**
+     * @implNote Mirrors the trust decision already made for {@link #sslSocketFactory}, since a
+     * WebSocket exec connection must not verify the server more strictly or more loosely than
+     * every other request this client makes.
+     */
+    public boolean isVerifyHostname() {
+        return verifyHostname;
     }
 
     public KubernetesResponse get(String path) throws IOException {

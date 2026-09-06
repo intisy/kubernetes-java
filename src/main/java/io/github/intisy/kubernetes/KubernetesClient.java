@@ -32,6 +32,9 @@ import io.github.intisy.kubernetes.command.system.*;
 import io.github.intisy.kubernetes.apply.ManifestApply;
 import io.github.intisy.kubernetes.apply.ResourceResolver;
 import io.github.intisy.kubernetes.config.KubeConfig;
+import io.github.intisy.kubernetes.exception.KubernetesException;
+import io.github.intisy.kubernetes.exec.ExecResult;
+import io.github.intisy.kubernetes.exec.PodExec;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
 import io.github.intisy.kubernetes.transport.KubernetesResponse;
@@ -44,6 +47,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.function.Predicate;
 
 /**
@@ -124,6 +128,26 @@ public class KubernetesClient implements Closeable {
             }
         });
         waiter.waitFor(kind, namespace, name, predicate, timeoutMillis);
+    }
+
+    /**
+     * Runs {@code command} in {@code pod}, the replacement for {@code kubectl exec}.
+     *
+     * @implNote Throws on a non-zero exit rather than returning it silently: the consuming CLI
+     * uses this to read files, run {@code psql}, and check metadata rows, so a failed command
+     * must surface as a failure here just as it did as a failed {@code kubectl exec} process.
+     */
+    public ExecResult exec(String namespace, String pod, String[] command) throws IOException {
+        PodExec podExec = new PodExec(httpClient.getApiServerUrl(), httpClient.getSslSocketFactory(),
+                httpClient.isVerifyHostname(), httpClient.getTimeout());
+        ExecResult result = podExec.exec(namespace, pod, command);
+        if (result.exitCode() != 0) {
+            throw new KubernetesException("command " + Arrays.toString(command) + " in pod " + namespace + "/" + pod
+                    + " exited with code " + result.exitCode()
+                    + "; stdout: " + result.stdout() + "; stderr: " + result.stderr(),
+                    result.exitCode());
+        }
+        return result;
     }
 
 
