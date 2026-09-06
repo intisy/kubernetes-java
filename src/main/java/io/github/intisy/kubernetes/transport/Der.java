@@ -20,6 +20,7 @@ final class Der {
     }
 
     int readTag() {
+        require(1);
         return bytes[position++] & 0xFF;
     }
 
@@ -33,19 +34,26 @@ final class Der {
     }
 
     int readLength() {
+        require(1);
         int first = bytes[position++] & 0xFF;
         if ((first & 0x80) == 0) {
             return first;
         }
         int byteCount = first & 0x7F;
+        require(byteCount);
         int length = 0;
         for (int i = 0; i < byteCount; i++) {
             length = (length << 8) | (bytes[position++] & 0xFF);
+        }
+        if (length < 0) {
+            throw new IllegalArgumentException("malformed DER: length field at offset "
+                    + (position - byteCount - 1) + " does not fit in an int");
         }
         return length;
     }
 
     byte[] readBytes(int length) {
+        require(length);
         byte[] value = new byte[length];
         System.arraycopy(bytes, position, value, 0, length);
         position += length;
@@ -53,6 +61,20 @@ final class Der {
     }
 
     void skip(int length) {
+        require(length);
         position += length;
+    }
+
+    /**
+     * @implNote every read goes through here so truncated input fails with a message naming the
+     * offset, instead of the ArrayIndexOutOfBoundsException the raw array access used to throw.
+     * That exception forced callers wanting a clean error to catch RuntimeException broadly, which
+     * would have swallowed unrelated bugs along with it.
+     */
+    private void require(int count) {
+        if (count < 0 || count > bytes.length - position) {
+            throw new IllegalArgumentException("malformed DER: " + count + " byte(s) needed at offset "
+                    + position + " but only " + (bytes.length - position) + " remain");
+        }
     }
 }
