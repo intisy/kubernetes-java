@@ -11,10 +11,16 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
 import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
 
 /**
@@ -33,64 +39,85 @@ public class KubernetesHttpClient implements Closeable {
     private final int timeout;
     private final SSLSocketFactory sslSocketFactory;
     private final HostnameVerifier hostnameVerifier;
+    private final boolean verifyHostname;
     private final String bearerToken;
 
+    /**
+     * @implNote {@code caCertPath} gates the whole TLS setup here on purpose, matching the
+     * historical path-based constructor: without a CA, client cert material is never even read
+     * and the client runs insecure. Preserved for backward compatibility.
+     */
     public KubernetesHttpClient(String apiServerUrl, String caCertPath, String clientCertPath, String clientKeyPath, int timeoutMs) {
-        this.apiServerUrl = apiServerUrl.endsWith("/") ? apiServerUrl.substring(0, apiServerUrl.length() - 1) : apiServerUrl;
-        this.timeout = timeoutMs;
-        this.bearerToken = null;
-        this.gson = new GsonBuilder()
-                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
-                .create();
-
-        SSLSocketFactory factory = null;
-        HostnameVerifier verifier = null;
-        if (caCertPath != null) {
-            try {
-                factory = createSslSocketFactory(caCertPath, clientCertPath, clientKeyPath);
-                verifier = createHostnameVerifier();
-            } catch (Exception e) {
-                log.warn("Failed to create SSL context, falling back to insecure: {}", e.getMessage());
-                factory = createInsecureSslSocketFactory();
-                verifier = createInsecureHostnameVerifier();
-            }
-        } else {
-            factory = createInsecureSslSocketFactory();
-            verifier = createInsecureHostnameVerifier();
-        }
-        this.sslSocketFactory = factory;
-        this.hostnameVerifier = verifier;
-
-        log.debug("Created KubernetesHttpClient for server: {}", apiServerUrl);
+        this(apiServerUrl,
+                readPemFile(caCertPath),
+                caCertPath != null ? readPemFile(clientCertPath) : null,
+                caCertPath != null ? readPemFile(clientKeyPath) : null,
+                timeoutMs,
+                false);
     }
 
     public KubernetesHttpClient(String apiServerUrl, String bearerToken, String caCertPath, int timeoutMs) {
-        this.apiServerUrl = apiServerUrl.endsWith("/") ? apiServerUrl.substring(0, apiServerUrl.length() - 1) : apiServerUrl;
-        this.timeout = timeoutMs;
-        this.bearerToken = bearerToken;
-        this.gson = new GsonBuilder()
-                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
-                .create();
+        this(apiServerUrl, bearerToken, readPemFile(caCertPath), timeoutMs, false);
+    }
 
-        SSLSocketFactory factory = null;
-        HostnameVerifier verifier = null;
-        if (caCertPath != null) {
+    public KubernetesHttpClient(String apiServerUrl, String caCertPem, String clientCertPem, String clientKeyPem, int timeoutMs, boolean insecureTrustAll) {
+        this.apiServerUrl = normalize(apiServerUrl);
+        this.timeout = timeoutMs;
+        this.bearerToken = null;
+        this.gson = newGson();
+
+        SSLSocketFactory factory;
+        HostnameVerifier verifier;
+        boolean secure;
+        if (!insecureTrustAll && (caCertPem != null || clientCertPem != null || clientKeyPem != null)) {
             try {
-                factory = createSslSocketFactoryWithCa(caCertPath);
+                factory = createSslSocketFactory(caCertPem, clientCertPem, clientKeyPem);
                 verifier = createHostnameVerifier();
+                secure = true;
             } catch (Exception e) {
-                log.warn("Failed to create SSL context with CA, falling back to insecure: {}", e.getMessage());
-                factory = createInsecureSslSocketFactory();
-                verifier = createInsecureHostnameVerifier();
+                throw new IllegalStateException("failed to build the TLS context for " + this.apiServerUrl
+                        + "; pass withInsecureTrustAll(true) to accept an unverified server deliberately", e);
             }
         } else {
             factory = createInsecureSslSocketFactory();
             verifier = createInsecureHostnameVerifier();
+            secure = false;
         }
         this.sslSocketFactory = factory;
         this.hostnameVerifier = verifier;
+        this.verifyHostname = secure;
 
-        log.debug("Created KubernetesHttpClient with bearer token for server: {}", apiServerUrl);
+        log.debug("Created KubernetesHttpClient for server: {}", this.apiServerUrl);
+    }
+
+    public KubernetesHttpClient(String apiServerUrl, String bearerToken, String caCertPem, int timeoutMs, boolean insecureTrustAll) {
+        this.apiServerUrl = normalize(apiServerUrl);
+        this.timeout = timeoutMs;
+        this.bearerToken = bearerToken;
+        this.gson = newGson();
+
+        SSLSocketFactory factory;
+        HostnameVerifier verifier;
+        boolean secure;
+        if (!insecureTrustAll && caCertPem != null) {
+            try {
+                factory = createSslSocketFactoryWithCa(caCertPem);
+                verifier = createHostnameVerifier();
+                secure = true;
+            } catch (Exception e) {
+                throw new IllegalStateException("failed to build the TLS context for " + this.apiServerUrl
+                        + "; pass withInsecureTrustAll(true) to accept an unverified server deliberately", e);
+            }
+        } else {
+            factory = createInsecureSslSocketFactory();
+            verifier = createInsecureHostnameVerifier();
+            secure = false;
+        }
+        this.sslSocketFactory = factory;
+        this.hostnameVerifier = verifier;
+        this.verifyHostname = secure;
+
+        log.debug("Created KubernetesHttpClient with bearer token for server: {}", this.apiServerUrl);
     }
 
     public KubernetesHttpClient(String apiServerUrl) {
@@ -101,8 +128,56 @@ public class KubernetesHttpClient implements Closeable {
         this(apiServerUrl, (String) null, null, null, timeoutMs);
     }
 
+    private static String normalize(String apiServerUrl) {
+        return apiServerUrl.endsWith("/") ? apiServerUrl.substring(0, apiServerUrl.length() - 1) : apiServerUrl;
+    }
+
+    private static Gson newGson() {
+        return new GsonBuilder()
+                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
+                .create();
+    }
+
+    private static String readPemFile(String path) {
+        if (path == null) {
+            return null;
+        }
+        try {
+            return new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("failed to read PEM file at " + path, e);
+        }
+    }
+
     public Gson getGson() {
         return gson;
+    }
+
+    public String getApiServerUrl() {
+        return apiServerUrl;
+    }
+
+    public int getTimeout() {
+        return timeout;
+    }
+
+    /**
+     * @implNote Exposed so a pod exec WebSocket connection, which this class cannot open itself
+     * (see {@link io.github.intisy.kubernetes.exec.PodExec}), can present the same client
+     * certificate this REST transport uses; without it, exec would authenticate differently from
+     * every other call and be rejected by the server.
+     */
+    public SSLSocketFactory getSslSocketFactory() {
+        return sslSocketFactory;
+    }
+
+    /**
+     * @implNote Mirrors the trust decision already made for {@link #sslSocketFactory}, since a
+     * WebSocket exec connection must not verify the server more strictly or more loosely than
+     * every other request this client makes.
+     */
+    public boolean isVerifyHostname() {
+        return verifyHostname;
     }
 
     public KubernetesResponse get(String path) throws IOException {
@@ -134,8 +209,13 @@ public class KubernetesHttpClient implements Closeable {
         return request("PUT", path, jsonBody);
     }
 
+    public KubernetesResponse patch(String path, Map<String, String> queryParams,
+                                     String body, String contentType) throws IOException {
+        return patchRequest(buildPathWithQuery(path, queryParams), body, contentType);
+    }
+
     public KubernetesResponse patch(String path, String jsonBody) throws IOException {
-        return patchRequest(path, jsonBody);
+        return patchRequest(path, jsonBody, "application/strategic-merge-patch+json");
     }
 
     public KubernetesResponse delete(String path) throws IOException {
@@ -229,7 +309,7 @@ public class KubernetesHttpClient implements Closeable {
         return new KubernetesResponse(statusCode, headers, responseBody);
     }
 
-    private KubernetesResponse patchRequest(String path, String body) throws IOException {
+    private KubernetesResponse patchRequest(String path, String body, String contentType) throws IOException {
         log.trace("PATCH {}", path);
         URL url = new URL(apiServerUrl + path);
 
@@ -251,7 +331,7 @@ public class KubernetesHttpClient implements Closeable {
         conn.setConnectTimeout(timeout);
         conn.setReadTimeout(timeout);
         conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("Content-Type", "application/strategic-merge-patch+json");
+        conn.setRequestProperty("Content-Type", contentType);
 
         if (bearerToken != null) {
             conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
@@ -344,35 +424,42 @@ public class KubernetesHttpClient implements Closeable {
         }
     }
 
-    private SSLSocketFactory createSslSocketFactory(String caCertPath, String clientCertPath, String clientKeyPath) throws Exception {
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-
-        KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
-        trustStore.load(null, null);
-        try (InputStream caInput = Files.newInputStream(new File(caCertPath).toPath())) {
-            X509Certificate caCert = (X509Certificate) cf.generateCertificate(caInput);
-            trustStore.setCertificateEntry("ca", caCert);
+    /**
+     * @implNote {@code caCertPem} is optional here: a caller supplying only a client
+     * certificate and key (no CA) still gets real server verification, via the JVM's default
+     * trust store, rather than being silently pushed onto the insecure path.
+     */
+    private SSLSocketFactory createSslSocketFactory(String caCertPem, String clientCertPem, String clientKeyPem) throws Exception {
+        TrustManager[] trustManagers = null;
+        if (caCertPem != null) {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+            trustStore.load(null, null);
+            try (InputStream caInput = new ByteArrayInputStream(caCertPem.getBytes(StandardCharsets.UTF_8))) {
+                X509Certificate caCert = (X509Certificate) cf.generateCertificate(caInput);
+                trustStore.setCertificateEntry("ca", caCert);
+            }
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+            trustManagers = tmf.getTrustManagers();
         }
 
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init(trustStore);
-
         KeyManager[] keyManagers = null;
-        if (clientCertPath != null && clientKeyPath != null) {
-            keyManagers = createKeyManagers(clientCertPath, clientKeyPath);
+        if (clientCertPem != null && clientKeyPem != null) {
+            keyManagers = createKeyManagers(clientCertPem, clientKeyPem);
         }
 
         SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(keyManagers, tmf.getTrustManagers(), null);
+        sslContext.init(keyManagers, trustManagers, null);
         return sslContext.getSocketFactory();
     }
 
-    private SSLSocketFactory createSslSocketFactoryWithCa(String caCertPath) throws Exception {
+    private SSLSocketFactory createSslSocketFactoryWithCa(String caCertPem) throws Exception {
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
 
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         trustStore.load(null, null);
-        try (InputStream caInput = Files.newInputStream(new File(caCertPath).toPath())) {
+        try (InputStream caInput = new ByteArrayInputStream(caCertPem.getBytes(StandardCharsets.UTF_8))) {
             X509Certificate caCert = (X509Certificate) cf.generateCertificate(caInput);
             trustStore.setCertificateEntry("ca", caCert);
         }
@@ -385,49 +472,55 @@ public class KubernetesHttpClient implements Closeable {
         return sslContext.getSocketFactory();
     }
 
-    private KeyManager[] createKeyManagers(String clientCertPath, String clientKeyPath) throws Exception {
+    private KeyManager[] createKeyManagers(String clientCertPem, String clientKeyPem) throws Exception {
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
         X509Certificate clientCert;
-        try (InputStream certInput = Files.newInputStream(new File(clientCertPath).toPath())) {
+        try (InputStream certInput = new ByteArrayInputStream(clientCertPem.getBytes(StandardCharsets.UTF_8))) {
             clientCert = (X509Certificate) cf.generateCertificate(certInput);
         }
 
-        byte[] keyBytes = parsePemPrivateKey(new File(clientKeyPath).toPath());
+        byte[] keyBytes = parsePemPrivateKey(clientKeyPem);
         if (keyBytes == null) {
-            log.warn("Failed to parse client private key from: {}", clientKeyPath);
-            return null;
+            throw new IllegalStateException("client key is not a PEM private key");
         }
 
-        java.security.PrivateKey privateKey;
-        try {
-            java.security.spec.PKCS8EncodedKeySpec keySpec = new java.security.spec.PKCS8EncodedKeySpec(keyBytes);
-            java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
-            privateKey = kf.generatePrivate(keySpec);
-        } catch (java.security.spec.InvalidKeySpecException e) {
+        PrivateKey privateKey;
+        if (clientKeyPem.contains("BEGIN EC PRIVATE KEY")) {
             try {
-                java.security.spec.PKCS8EncodedKeySpec keySpec = new java.security.spec.PKCS8EncodedKeySpec(keyBytes);
-                java.security.KeyFactory kf = java.security.KeyFactory.getInstance("EC");
-                privateKey = kf.generatePrivate(keySpec);
-            } catch (java.security.spec.InvalidKeySpecException e2) {
-                log.warn("Failed to parse private key as RSA or EC: {}", e.getMessage());
-                return null;
+                privateKey = Sec1EcKey.toPrivateKey(keyBytes);
+            } catch (GeneralSecurityException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                throw new GeneralSecurityException("failed to parse SEC1 EC private key: malformed or truncated DER", e);
             }
+        } else {
+            privateKey = fromPkcs8(keyBytes);
         }
 
         char[] password = "changeit".toCharArray();
         KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
         keyStore.load(null, null);
-        keyStore.setKeyEntry("client", privateKey, password,
-                new java.security.cert.Certificate[]{clientCert});
+        keyStore.setKeyEntry("client", privateKey, password, new Certificate[]{clientCert});
 
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         kmf.init(keyStore, password);
         return kmf.getKeyManagers();
     }
 
-    private byte[] parsePemPrivateKey(Path keyPath) throws IOException {
-        String pem = new String(Files.readAllBytes(keyPath), StandardCharsets.UTF_8);
+    private PrivateKey fromPkcs8(byte[] keyBytes) throws GeneralSecurityException {
+        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
+        try {
+            return KeyFactory.getInstance("RSA").generatePrivate(keySpec);
+        } catch (InvalidKeySpecException rsaFailure) {
+            try {
+                return KeyFactory.getInstance("EC").generatePrivate(keySpec);
+            } catch (InvalidKeySpecException ecFailure) {
+                throw new GeneralSecurityException("client key is not a valid PKCS8 RSA or EC private key", ecFailure);
+            }
+        }
+    }
 
+    private byte[] parsePemPrivateKey(String pem) {
         boolean isPkcs1 = pem.contains("BEGIN RSA PRIVATE KEY");
 
         String base64 = pem

@@ -29,13 +29,26 @@ import io.github.intisy.kubernetes.command.serviceaccount.*;
 import io.github.intisy.kubernetes.command.statefulset.*;
 import io.github.intisy.kubernetes.command.storageclass.*;
 import io.github.intisy.kubernetes.command.system.*;
+import io.github.intisy.kubernetes.apply.ManifestApply;
+import io.github.intisy.kubernetes.apply.ResourceResolver;
+import io.github.intisy.kubernetes.config.KubeConfig;
+import io.github.intisy.kubernetes.exec.ExecFailedException;
+import io.github.intisy.kubernetes.exec.ExecResult;
+import io.github.intisy.kubernetes.exec.PodExec;
 import io.github.intisy.kubernetes.model.*;
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
+import io.github.intisy.kubernetes.transport.KubernetesResponse;
+import io.github.intisy.kubernetes.wait.Waiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.function.Predicate;
 
 /**
  * Kubernetes client for communicating with the Kubernetes API server.
@@ -65,13 +78,81 @@ public class KubernetesClient implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(KubernetesClient.class);
 
     private final KubernetesHttpClient httpClient;
+    private final ManifestApply manifestApply;
+    private final ResourceResolver resourceResolver;
 
     private KubernetesClient(KubernetesHttpClient httpClient) {
         this.httpClient = httpClient;
+        this.resourceResolver = new ResourceResolver(httpClient);
+        this.manifestApply = new ManifestApply(httpClient, resourceResolver);
     }
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    public static KubernetesClient fromKubeConfig(KubeConfig config) {
+        return builder()
+                .withApiServer(config.server())
+                .withCaCertPem(config.caCertPem())
+                .withClientCertPem(config.clientCertPem())
+                .withClientKeyPem(config.clientKeyPem())
+                .build();
+    }
+
+
+    public void applyYaml(String yaml) throws IOException {
+        manifestApply.applyYaml(yaml);
+    }
+
+    /**
+     * Polls the resource's status document every 2 seconds until the predicate holds or
+     * {@code timeoutMillis} passes, the replacement for {@code kubectl wait} and
+     * {@code kubectl rollout status}. Use {@link io.github.intisy.kubernetes.wait.Conditions#isReady}
+     * for a Pod or a CloudNativePG {@code Cluster}, and {@link io.github.intisy.kubernetes.wait.Conditions#isRolloutComplete}
+     * for a Deployment, DaemonSet or StatefulSet.
+     */
+    public void waitFor(final String apiVersion, final String kind, final String namespace, final String name,
+                         Predicate<String> predicate, long timeoutMillis) throws IOException {
+        String plural = resourceResolver.resolvePlural(apiVersion, kind);
+        final String path = ManifestApply.resourcePath(apiVersion, plural, namespace, name);
+        Waiter waiter = new Waiter(new Waiter.Fetcher() {
+            @Override
+            public String fetch() throws IOException {
+                KubernetesResponse response = httpClient.get(path);
+                if (!response.isSuccessful()) {
+                    throw new Waiter.FetchFailedException("failed to fetch " + kind + " " + name + " at " + path
+                            + ": HTTP " + response.getStatusCode() + ": " + response.getBody(), response.getStatusCode());
+                }
+                return response.getBody();
+            }
+        });
+        waiter.waitFor(kind, namespace, name, predicate, timeoutMillis);
+    }
+
+    /**
+     * Runs {@code command} in {@code pod}, the replacement for {@code kubectl exec}, waiting up
+     * to {@link PodExec#DEFAULT_SESSION_TIMEOUT_MILLIS} for it to finish.
+     *
+     * @implNote Throws on a non-zero exit rather than returning it silently: the consuming CLI
+     * uses this to read files, run {@code psql}, and check metadata rows, so a failed command
+     * must surface as a failure here just as it did as a failed {@code kubectl exec} process.
+     */
+    public ExecResult exec(String namespace, String pod, String[] command) throws IOException {
+        return exec(namespace, pod, command, PodExec.DEFAULT_SESSION_TIMEOUT_MILLIS);
+    }
+
+    public ExecResult exec(String namespace, String pod, String[] command, int sessionTimeoutMillis) throws IOException {
+        PodExec podExec = new PodExec(httpClient.getApiServerUrl(), httpClient.getSslSocketFactory(),
+                httpClient.isVerifyHostname(), httpClient.getTimeout(), sessionTimeoutMillis);
+        ExecResult result = podExec.exec(namespace, pod, command);
+        if (result.exitCode() != 0) {
+            throw new ExecFailedException("command " + Arrays.toString(command) + " in pod " + namespace + "/" + pod
+                    + " exited with code " + result.exitCode()
+                    + "; stdout: " + result.stdout() + "; stderr: " + result.stderr(),
+                    result.exitCode());
+        }
+        return result;
     }
 
 
@@ -532,6 +613,10 @@ public class KubernetesClient implements Closeable {
         private String caCertPath;
         private String clientCertPath;
         private String clientKeyPath;
+        private String caCertPem;
+        private String clientCertPem;
+        private String clientKeyPem;
+        private boolean insecureTrustAll;
         private int timeout = 30000;
 
         private Builder() {
@@ -562,26 +647,80 @@ public class KubernetesClient implements Closeable {
             return this;
         }
 
+        public Builder withCaCertPem(String caCertPem) {
+            this.caCertPem = caCertPem;
+            return this;
+        }
+
+        public Builder withClientCertPem(String clientCertPem) {
+            this.clientCertPem = clientCertPem;
+            return this;
+        }
+
+        public Builder withClientKeyPem(String clientKeyPem) {
+            this.clientKeyPem = clientKeyPem;
+            return this;
+        }
+
+        public Builder withInsecureTrustAll(boolean insecureTrustAll) {
+            this.insecureTrustAll = insecureTrustAll;
+            return this;
+        }
+
         public Builder withTimeout(int timeoutMs) {
             this.timeout = timeoutMs;
             return this;
         }
 
+        /**
+         * @implNote Paths are read into PEM content here and every combination is routed through
+         * the PEM-taking constructors, rather than branching between path-based and PEM-based
+         * constructors. A caller supplying only a CA (PEM or path) must reach real TLS
+         * verification, not the insecure fallback; keeping one code path here is what makes that
+         * (and {@code withInsecureTrustAll}) apply uniformly regardless of whether the caller
+         * used the path-based or PEM-based builder methods. A client cert and key with no CA is
+         * rejected rather than falling back to the JVM's system trust store: a Kubernetes
+         * cluster's CA is essentially never in that store, so that fallback would only defer the
+         * same failure to first request, as a bare PKIX error with no hint that a CA or
+         * {@code withInsecureTrustAll} exists.
+         */
         public KubernetesClient build() {
             if (apiServerUrl == null) {
                 apiServerUrl = "https://localhost:8443";
             }
             log.debug("Building KubernetesClient for server: {}", apiServerUrl);
 
+            String effectiveCaCertPem = caCertPem != null ? caCertPem : readPemFile(caCertPath);
+            String effectiveClientCertPem = clientCertPem != null ? clientCertPem : readPemFile(clientCertPath);
+            String effectiveClientKeyPem = clientKeyPem != null ? clientKeyPem : readPemFile(clientKeyPath);
+
+            if ((effectiveClientCertPem == null) != (effectiveClientKeyPem == null)) {
+                throw new IllegalStateException("client certificate and client key must both be supplied, or neither");
+            }
+            if (effectiveClientCertPem != null && effectiveCaCertPem == null && !insecureTrustAll) {
+                throw new IllegalStateException("client certificate supplied without a CA certificate; the server cannot be verified, "
+                        + "pass withCaCertPem or withCaCert to verify against your cluster's CA, "
+                        + "or withInsecureTrustAll(true) to accept an unverified connection deliberately");
+            }
+
             KubernetesHttpClient httpClient;
             if (bearerToken != null) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, caCertPath, timeout);
-            } else if (clientCertPath != null && clientKeyPath != null) {
-                httpClient = new KubernetesHttpClient(apiServerUrl, caCertPath, clientCertPath, clientKeyPath, timeout);
+                httpClient = new KubernetesHttpClient(apiServerUrl, bearerToken, effectiveCaCertPem, timeout, insecureTrustAll);
             } else {
-                httpClient = new KubernetesHttpClient(apiServerUrl, timeout);
+                httpClient = new KubernetesHttpClient(apiServerUrl, effectiveCaCertPem, effectiveClientCertPem, effectiveClientKeyPem, timeout, insecureTrustAll);
             }
             return new KubernetesClient(httpClient);
+        }
+
+        private static String readPemFile(String path) {
+            if (path == null) {
+                return null;
+            }
+            try {
+                return new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to read PEM file at " + path, e);
+            }
         }
     }
 }
