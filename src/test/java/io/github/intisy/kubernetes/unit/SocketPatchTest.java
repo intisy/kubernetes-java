@@ -2,6 +2,7 @@ package io.github.intisy.kubernetes.unit;
 
 import io.github.intisy.kubernetes.transport.KubernetesHttpClient;
 import io.github.intisy.kubernetes.transport.KubernetesResponse;
+import io.github.intisy.kubernetes.transport.SocketPatch;
 import org.junit.jupiter.api.Test;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -9,6 +10,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLServerSocketFactory;
+import javax.net.ssl.SSLSocketFactory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
@@ -18,6 +20,7 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -200,22 +203,34 @@ class SocketPatchTest {
         }
     }
 
+    /**
+     * @implNote Drives the failure at TLS layering rather than at hostname verification, which is
+     * where the earlier form of this test aimed. Two things were wrong with that aim. It asserted on
+     * what the peer observed, and once endpoint identification moved inside the handshake JSSE sends
+     * a fatal alert before any close, which the peer may see as an alert, an end-of-stream or a reset
+     * depending on the platform: that form passed on Windows and failed on Linux and macOS. It also
+     * could not have had teeth wherever it ran, because JSSE closes the socket itself when a
+     * handshake fails fatally, so the socket ends up closed there with or without the close this is
+     * meant to guard. A failure while layering TLS over the already-connected socket is the real
+     * case: nothing else owns that socket yet, so it leaks unless openSecureSocket closes it.
+     */
     @Test
-    void aFailedHostnameVerificationClosesTheClientSocket() throws Exception {
-        try (FakeServer server = new FakeServer(sslServerSocket())) {
-            Future<Integer> peerRead = server.expectEndOfStream();
-            KubernetesHttpClient client = new KubernetesHttpClient(
-                    "https://localhost:" + server.port(), null, fixture("tls-cert.pem"), TIMEOUT_MS, false);
+    void aFailureWhileLayeringTlsClosesTheConnectedSocket() throws Exception {
+        try (FakeServer server = new FakeServer()) {
+            server.acceptAndIgnore();
+            FailingSslSocketFactory factory = new FailingSslSocketFactory();
+            SocketPatch patch = new SocketPatch(factory, true, TIMEOUT_MS, null);
+            URL url = new URL("https://127.0.0.1:" + server.port() + "/api/v1/namespaces/demo");
 
-            assertThrows(IOException.class, () -> client.patch("/api/v1/namespaces/demo", "{}"));
+            Throwable thrown = assertThrows(IOException.class, () -> patch.send(url, "{}", "application/json"));
+            assertEquals(FailingSslSocketFactory.MESSAGE, thrown.getMessage(),
+                    "expected the original layering failure to propagate rather than one raised while cleaning up");
 
-            int firstByte = peerRead.get(10, TimeUnit.SECONDS);
-            assertEquals(-1, firstByte,
-                    "expected the server to observe end-of-stream (or a connection abort, treated the same way, "
-                            + "since real JSSE endpoint identification can fail mid-handshake) once the client's "
-                            + "socket is closed after the failed hostname verification; a leaked, never-closed "
-                            + "socket would instead leave the server blocked until its own SocketTimeoutException, "
-                            + "which is not caught and would fail this test");
+            Socket connected = factory.connectedSocket();
+            assertTrue(connected != null, "expected TLS layering to be reached, so a socket was already connected");
+            assertTrue(connected.isClosed(),
+                    "expected the connected socket to be closed when TLS layering fails; it is never returned to "
+                            + "send(), so nothing else would ever close it");
         }
     }
 
@@ -391,6 +406,60 @@ class SocketPatchTest {
         return separator >= 0 ? request.substring(separator + 4) : "";
     }
 
+    /**
+     * @implNote Captures the connected socket handed to it and then fails, which is the only way a
+     * test can hold the socket {@link SocketPatch} opens for itself: it is a local variable that is
+     * never returned when layering fails. Every other overload throws, since reaching one would mean
+     * the production code took a path this test does not describe, and quietly succeeding there
+     * would leave the assertions below looking at a socket nobody used.
+     */
+    private static final class FailingSslSocketFactory extends SSLSocketFactory {
+        static final String MESSAGE = "tls layering failed";
+        private static final String UNEXPECTED = "SocketPatch must layer TLS over a socket it connected itself";
+
+        private volatile Socket connected;
+
+        Socket connectedSocket() {
+            return connected;
+        }
+
+        @Override
+        public Socket createSocket(Socket socket, String host, int port, boolean autoClose) throws IOException {
+            connected = socket;
+            throw new IOException(MESSAGE);
+        }
+
+        @Override
+        public String[] getDefaultCipherSuites() {
+            return new String[0];
+        }
+
+        @Override
+        public String[] getSupportedCipherSuites() {
+            return new String[0];
+        }
+
+        @Override
+        public Socket createSocket(String host, int port) {
+            throw new UnsupportedOperationException(UNEXPECTED);
+        }
+
+        @Override
+        public Socket createSocket(String host, int port, InetAddress localHost, int localPort) {
+            throw new UnsupportedOperationException(UNEXPECTED);
+        }
+
+        @Override
+        public Socket createSocket(InetAddress host, int port) {
+            throw new UnsupportedOperationException(UNEXPECTED);
+        }
+
+        @Override
+        public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) {
+            throw new UnsupportedOperationException(UNEXPECTED);
+        }
+    }
+
     private static final class FakeServer implements Closeable {
         private final ServerSocket serverSocket;
         private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -426,18 +495,17 @@ class SocketPatchTest {
             return requestFuture.get(10, TimeUnit.SECONDS);
         }
 
-        Future<Integer> expectEndOfStream() {
-            return executor.submit(new Callable<Integer>() {
+        void acceptAndIgnore() {
+            executor.submit(new Callable<Void>() {
                 @Override
-                public Integer call() throws Exception {
+                public Void call() {
                     try (Socket socket = serverSocket.accept()) {
                         socket.setSoTimeout(8000);
-                        try {
-                            return socket.getInputStream().read();
-                        } catch (java.net.SocketException e) {
-                            return -1;
-                        }
+                        socket.getInputStream().read();
+                    } catch (IOException aborted) {
+                        // the client abandons the connection; the peer's view of that is not asserted on.
                     }
+                    return null;
                 }
             });
         }
