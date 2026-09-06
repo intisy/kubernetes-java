@@ -168,6 +168,23 @@ class SocketPatchTest {
         }
     }
 
+    @Test
+    void aFailedHostnameVerificationClosesTheClientSocket() throws Exception {
+        try (FakeServer server = new FakeServer(sslServerSocket())) {
+            Future<Integer> peerRead = server.expectEndOfStream();
+            KubernetesHttpClient client = new KubernetesHttpClient(
+                    "https://localhost:" + server.port(), null, fixture("tls-cert.pem"), TIMEOUT_MS, false);
+
+            assertThrows(IOException.class, () -> client.patch("/api/v1/namespaces/demo", "{}"));
+
+            int firstByte = peerRead.get(10, TimeUnit.SECONDS);
+            assertEquals(-1, firstByte,
+                    "expected the server to observe end-of-stream once the client's socket is closed after the "
+                            + "failed hostname verification; a leaked, never-closed socket would leave the server "
+                            + "blocked reading until its own read timeout instead");
+        }
+    }
+
     private static final int TIMEOUT_MS = 5000;
 
     private static SSLServerSocket sslServerSocket() throws Exception {
@@ -283,6 +300,18 @@ class SocketPatchTest {
 
         String awaitRequest() throws Exception {
             return requestFuture.get(10, TimeUnit.SECONDS);
+        }
+
+        Future<Integer> expectEndOfStream() {
+            return executor.submit(new Callable<Integer>() {
+                @Override
+                public Integer call() throws Exception {
+                    try (Socket socket = serverSocket.accept()) {
+                        socket.setSoTimeout(8000);
+                        return socket.getInputStream().read();
+                    }
+                }
+            });
         }
 
         private static byte[] readRequest(InputStream in) throws IOException {

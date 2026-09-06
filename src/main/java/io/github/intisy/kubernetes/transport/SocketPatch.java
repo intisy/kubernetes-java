@@ -75,20 +75,38 @@ public final class SocketPatch {
 
     private Socket openPlainSocket(String host, int port) throws IOException {
         Socket socket = new Socket();
-        socket.connect(new InetSocketAddress(host, port), timeoutMs);
-        return socket;
+        try {
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            return socket;
+        } catch (IOException e) {
+            closeQuietly(socket);
+            throw e;
+        }
     }
 
     private Socket openSecureSocket(String host, int port) throws IOException {
-        Socket raw = new Socket();
-        raw.connect(new InetSocketAddress(host, port), timeoutMs);
-        SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket(raw, host, port, true);
-        sslSocket.setSoTimeout(timeoutMs);
-        sslSocket.startHandshake();
-        if (hostnameVerifier != null && !hostnameVerifier.verify(host, sslSocket.getSession())) {
-            throw new SSLException("hostname verification failed for " + host);
+        Socket socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            socket = sslSocketFactory.createSocket(socket, host, port, true);
+            SSLSocket sslSocket = (SSLSocket) socket;
+            sslSocket.setSoTimeout(timeoutMs);
+            sslSocket.startHandshake();
+            if (hostnameVerifier != null && !hostnameVerifier.verify(host, sslSocket.getSession())) {
+                throw new SSLException("hostname verification failed for " + host);
+            }
+            return sslSocket;
+        } catch (IOException e) {
+            closeQuietly(socket);
+            throw e;
         }
-        return sslSocket;
+    }
+
+    private static void closeQuietly(Socket socket) {
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
     }
 
     private byte[] buildRequest(String host, int port, boolean https, String path,
