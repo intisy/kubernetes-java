@@ -1,7 +1,6 @@
 package io.github.intisy.kubernetes.transport;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.ByteArrayOutputStream;
@@ -31,14 +30,14 @@ import java.util.Map;
  */
 public final class SocketPatch {
     private final SSLSocketFactory sslSocketFactory;
-    private final HostnameVerifier hostnameVerifier;
+    private final boolean verifyHostname;
     private final int timeoutMs;
     private final String bearerToken;
 
-    public SocketPatch(SSLSocketFactory sslSocketFactory, HostnameVerifier hostnameVerifier,
+    public SocketPatch(SSLSocketFactory sslSocketFactory, boolean verifyHostname,
                         int timeoutMs, String bearerToken) {
         this.sslSocketFactory = sslSocketFactory;
-        this.hostnameVerifier = hostnameVerifier;
+        this.verifyHostname = verifyHostname;
         this.timeoutMs = timeoutMs;
         this.bearerToken = bearerToken;
     }
@@ -84,6 +83,15 @@ public final class SocketPatch {
         }
     }
 
+    /**
+     * @implNote A custom {@link javax.net.ssl.HostnameVerifier} run as the primary gate would
+     * repeat the mistake this class replaces: {@code HttpsURLConnection} only ever falls back to
+     * that verifier after its own JSSE endpoint identification has already rejected the
+     * certificate, so {@link javax.net.ssl.HttpsURLConnection#getDefaultHostnameVerifier()} is a
+     * deny-everything last resort, not a real check. Setting {@code setEndpointIdentificationAlgorithm("HTTPS")}
+     * before the handshake instead lets JSSE itself match the certificate's DNS and IP subject
+     * alternative names, exactly as an ordinary HTTPS connection does.
+     */
     private Socket openSecureSocket(String host, int port) throws IOException {
         Socket socket = new Socket();
         try {
@@ -91,10 +99,12 @@ public final class SocketPatch {
             socket = sslSocketFactory.createSocket(socket, host, port, true);
             SSLSocket sslSocket = (SSLSocket) socket;
             sslSocket.setSoTimeout(timeoutMs);
-            sslSocket.startHandshake();
-            if (hostnameVerifier != null && !hostnameVerifier.verify(host, sslSocket.getSession())) {
-                throw new SSLException("hostname verification failed for " + host);
+            if (verifyHostname) {
+                SSLParameters parameters = sslSocket.getSSLParameters();
+                parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                sslSocket.setSSLParameters(parameters);
             }
+            sslSocket.startHandshake();
             return sslSocket;
         } catch (IOException e) {
             closeQuietly(socket);
