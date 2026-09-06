@@ -42,4 +42,24 @@ class KubeConfigTest {
                 () -> KubeConfig.parseString(withoutContext));
         assertEquals("kubeconfig has no context named 'nope'", thrown.getMessage());
     }
+
+    @Test
+    void failsLoudlyWhenTheReferencedClusterIsMissing() throws Exception {
+        String withoutCluster = fixture("kubeconfig-talos.yaml")
+                .replace("cluster: talos-default", "cluster: nope");
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> KubeConfig.parseString(withoutCluster));
+        assertEquals("kubeconfig has no cluster named 'nope'", thrown.getMessage());
+    }
+
+    @Test
+    void failsLoudlyWhenTheReferencedUserIsMissing() throws Exception {
+        String withoutUser = fixture("kubeconfig-talos.yaml")
+                .replace("user: admin@talos-default", "user: nope");
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> KubeConfig.parseString(withoutUser));
+        assertEquals("kubeconfig has no user named 'nope'", thrown.getMessage());
+    }
 }
