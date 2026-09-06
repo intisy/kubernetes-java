@@ -138,20 +138,31 @@ class FetchResourceTest {
             }
         }
 
+        /**
+         * @implNote reads the WHOLE header block, not just the request line. Responding and closing
+         * while request bytes are still unread makes the close a TCP reset on Linux and macOS, which
+         * destroys the response the client has not read yet and surfaces as a connection failure
+         * instead of the status the test stubbed. That is what made an earlier form of this server
+         * pass on Windows and fail elsewhere.
+         */
         private static String readRequestPath(InputStream in) throws IOException {
-            ByteArrayOutputStream line = new ByteArrayOutputStream();
-            int previous = -1;
-            int current;
-            while ((current = in.read()) != -1) {
-                if (previous == '\r' && current == '\n') {
-                    break;
+            ByteArrayOutputStream header = new ByteArrayOutputStream();
+            int matched = 0;
+            String terminator = "\r\n\r\n";
+            int b;
+            while ((b = in.read()) != -1) {
+                header.write(b);
+                if (b == terminator.charAt(matched)) {
+                    matched++;
+                    if (matched == terminator.length()) {
+                        break;
+                    }
+                } else {
+                    matched = (b == terminator.charAt(0)) ? 1 : 0;
                 }
-                if (previous != -1) {
-                    line.write(previous);
-                }
-                previous = current;
             }
-            String[] parts = new String(line.toByteArray(), StandardCharsets.UTF_8).split(" ");
+            String requestLine = new String(header.toByteArray(), StandardCharsets.UTF_8).split("\r\n", 2)[0];
+            String[] parts = requestLine.split(" ");
             return parts.length > 1 ? parts[1] : "";
         }
 
