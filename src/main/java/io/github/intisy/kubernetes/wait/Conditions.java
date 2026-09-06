@@ -51,10 +51,15 @@ public final class Conditions {
      * whose primary key ({@code replicas} or {@code desiredNumberScheduled}) is missing entirely
      * reads as incomplete, since that is what an object with no status yet looks like.
      * <p>
-     * The replica target is {@code spec.replicas} when the object carries one, matching
-     * {@code kubectl rollout status}. Reading {@code status.replicas} instead is what a freshly
-     * created workload publishes before any pod exists, so a caller polling a cold object would be
-     * told a rollout that has not started is complete.
+     * The replica target is {@code spec.replicas} when the object carries one. Reading
+     * {@code status.replicas} as the target instead is what a freshly created workload publishes
+     * before any pod exists, so a caller polling a cold object would be told a rollout that has not
+     * started is complete. Two further conditions keep an update in progress from reading as
+     * finished, both of which {@code kubectl rollout status} also requires: every replica must be
+     * on the new revision ({@code updatedReplicas}), and no pod from the old revision may remain
+     * ({@code status.replicas} above the target means a surge pod is still being replaced). Without
+     * them a rolling update reads complete the moment the OLD pods happen to satisfy the ready
+     * count.
      */
     public static boolean isRolloutComplete(String statusJson) {
         JsonObject root = parse(statusJson);
@@ -73,7 +78,14 @@ public final class Conditions {
         }
         JsonObject spec = objectAt(root, "spec");
         if (spec != null && spec.has("replicas")) {
-            return longAt(status, "readyReplicas") >= longAt(spec, "replicas");
+            long target = longAt(spec, "replicas");
+            if (status.has("updatedReplicas") && longAt(status, "updatedReplicas") < target) {
+                return false;
+            }
+            if (status.has("replicas") && longAt(status, "replicas") > target) {
+                return false;
+            }
+            return longAt(status, "readyReplicas") >= target;
         }
         return status.has("replicas")
                 && longAt(status, "readyReplicas") >= longAt(status, "replicas");
@@ -95,8 +107,10 @@ public final class Conditions {
             return "numberReady=" + longAt(status, "numberReady")
                     + ", desiredNumberScheduled=" + longAt(status, "desiredNumberScheduled");
         }
+        String target = specReplicas(statusJson);
         return "readyReplicas=" + longAt(status, "readyReplicas")
                 + ", replicas=" + longAt(status, "replicas")
+                + target
                 + ", observedGeneration=" + longAt(status, "observedGeneration");
     }
 
@@ -113,6 +127,17 @@ public final class Conditions {
             summary.append(stringAt(condition, "type")).append('=').append(stringAt(condition, "status"));
         }
         return summary.length() > 0 ? summary.toString() : null;
+    }
+
+    /**
+     * @implNote without this a caller reading the summary of a cold workload sees
+     * {@code readyReplicas=0, replicas=0}, a pair that looks satisfied, next to a verdict of not
+     * ready. The number that actually decides it is in the spec, and this is also the text a wait
+     * timeout carries, so it has to be self-consistent on its own.
+     */
+    private static String specReplicas(String statusJson) {
+        JsonObject spec = objectAt(parse(statusJson), "spec");
+        return spec != null && spec.has("replicas") ? ", spec.replicas=" + longAt(spec, "replicas") : "";
     }
 
     private static JsonObject parse(String json) {

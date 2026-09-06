@@ -86,11 +86,33 @@ class ConditionsTest {
                 + "\"status\":{\"observedGeneration\":1,\"replicas\":0}}"));
     }
 
+    /**
+     * @implNote the surge window. During a rolling update the ready count can be satisfied entirely
+     * by pods of the OLD revision while a new one is still coming up, so readiness alone would call
+     * a half-finished update complete.
+     */
     @Test
-    void rolloutCompleteWhenTheSpecIsSatisfiedEvenWhileStatusReplicasLagBehind() {
-        assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
+    void rolloutIncompleteWhileASurgePodFromTheOldRevisionIsStillBeingReplaced() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":2},"
                 + "\"spec\":{\"replicas\":1},"
-                + "\"status\":{\"observedGeneration\":1,\"replicas\":2,\"readyReplicas\":1}}"));
+                + "\"status\":{\"observedGeneration\":2,\"replicas\":2,"
+                + "\"readyReplicas\":1,\"updatedReplicas\":1}}"));
+    }
+
+    @Test
+    void rolloutIncompleteWhileAnyReplicaIsStillOnTheOldRevision() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":2},"
+                + "\"spec\":{\"replicas\":2},"
+                + "\"status\":{\"observedGeneration\":2,\"replicas\":2,"
+                + "\"readyReplicas\":2,\"updatedReplicas\":1}}"));
+    }
+
+    @Test
+    void rolloutCompleteOnceEveryReplicaIsUpdatedAndReadyAndNoOldPodRemains() {
+        assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":2},"
+                + "\"spec\":{\"replicas\":2},"
+                + "\"status\":{\"observedGeneration\":2,\"replicas\":2,"
+                + "\"readyReplicas\":2,\"updatedReplicas\":2}}"));
     }
 
     @Test
@@ -104,6 +126,21 @@ class ConditionsTest {
     void rolloutIncompleteWhenNoReplicaCountsAreReportedAtAll() {
         assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
                 + "\"status\":{\"observedGeneration\":1}}"));
+    }
+
+    /**
+     * @implNote the summary is what a wait timeout prints, so for the cold case it has to name the
+     * number that decides the verdict. Without the spec count it reads "readyReplicas=0, replicas=0",
+     * which looks satisfied next to a report of not ready.
+     */
+    @Test
+    void summarizeNamesTheSpecReplicaCountThatDecidesAColdWorkload() {
+        String summary = Conditions.summarize("{\"metadata\":{\"generation\":1},"
+                + "\"spec\":{\"replicas\":1},"
+                + "\"status\":{\"observedGeneration\":1,\"replicas\":0}}");
+
+        assertTrue(summary.contains("spec.replicas=1"), summary);
+        assertTrue(summary.contains("readyReplicas=0"), summary);
     }
 
     @Test
