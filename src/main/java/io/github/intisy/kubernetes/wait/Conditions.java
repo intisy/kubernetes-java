@@ -44,9 +44,12 @@ public final class Conditions {
      * started. Once generation matches, the replica pair compared depends on which fields the
      * status carries: {@code numberReady} against {@code desiredNumberScheduled} for a DaemonSet,
      * {@code readyReplicas} against {@code replicas} for everything else (Deployment, ReplicaSet,
-     * StatefulSet). A missing pair reads as zero on both sides, which this treats as incomplete
-     * rather than complete, since otherwise a freshly created object with no status yet would
-     * report a finished rollout the instant it appeared.
+     * StatefulSet). Which pair applies, and whether it counts as reported at all, is decided by
+     * key presence rather than by value: a workload scaled to zero (or a DaemonSet whose node
+     * selector matches no nodes) legitimately reports its count as {@code 0} with the ready
+     * counterpart absent, and that is a completed rollout, not an incomplete one. Only a pair
+     * whose primary key ({@code replicas} or {@code desiredNumberScheduled}) is missing entirely
+     * reads as incomplete, since that is what an object with no status yet looks like.
      */
     public static boolean isRolloutComplete(String statusJson) {
         JsonObject root = parse(statusJson);
@@ -60,13 +63,11 @@ public final class Conditions {
             return false;
         }
         if (status.has("desiredNumberScheduled") || status.has("numberReady")) {
-            long desired = longAt(status, "desiredNumberScheduled");
-            long ready = longAt(status, "numberReady");
-            return desired > 0 && ready >= desired;
+            return status.has("desiredNumberScheduled")
+                    && longAt(status, "numberReady") >= longAt(status, "desiredNumberScheduled");
         }
-        long replicas = longAt(status, "replicas");
-        long readyReplicas = longAt(status, "readyReplicas");
-        return replicas > 0 && readyReplicas >= replicas;
+        return status.has("replicas")
+                && longAt(status, "readyReplicas") >= longAt(status, "replicas");
     }
 
     public static String summarize(String statusJson) {

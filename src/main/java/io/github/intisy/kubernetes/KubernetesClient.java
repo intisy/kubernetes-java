@@ -117,8 +117,8 @@ public class KubernetesClient implements Closeable {
             public String fetch() throws IOException {
                 KubernetesResponse response = httpClient.get(path);
                 if (!response.isSuccessful()) {
-                    throw new IOException("failed to fetch " + kind + " " + name + " at " + path
-                            + ": HTTP " + response.getStatusCode() + ": " + response.getBody());
+                    throw new Waiter.FetchFailedException("failed to fetch " + kind + " " + name + " at " + path
+                            + ": HTTP " + response.getStatusCode() + ": " + response.getBody(), response.getStatusCode());
                 }
                 return response.getBody();
             }
