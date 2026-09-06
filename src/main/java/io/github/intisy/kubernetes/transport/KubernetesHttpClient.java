@@ -312,65 +312,7 @@ public class KubernetesHttpClient implements Closeable {
     private KubernetesResponse patchRequest(String path, String body, String contentType) throws IOException {
         log.trace("PATCH {}", path);
         URL url = new URL(apiServerUrl + path);
-
-        HttpURLConnection conn;
-        if (url.getProtocol().equals("https")) {
-            HttpsURLConnection httpsConn = (HttpsURLConnection) url.openConnection();
-            if (sslSocketFactory != null) {
-                httpsConn.setSSLSocketFactory(sslSocketFactory);
-            }
-            if (hostnameVerifier != null) {
-                httpsConn.setHostnameVerifier(hostnameVerifier);
-            }
-            conn = httpsConn;
-        } else {
-            conn = (HttpURLConnection) url.openConnection();
-        }
-
-        setHttpMethod(conn, "PATCH");
-        conn.setConnectTimeout(timeout);
-        conn.setReadTimeout(timeout);
-        conn.setRequestProperty("Accept", "application/json");
-        conn.setRequestProperty("Content-Type", contentType);
-
-        if (bearerToken != null) {
-            conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
-        }
-
-        if (body != null) {
-            conn.setDoOutput(true);
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-            }
-        }
-
-        int statusCode = conn.getResponseCode();
-        Map<String, List<String>> headers = conn.getHeaderFields();
-
-        String responseBody;
-        try (InputStream is = statusCode >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
-            if (is != null) {
-                responseBody = readStream(is);
-            } else {
-                responseBody = "";
-            }
-        }
-
-        return new KubernetesResponse(statusCode, headers, responseBody);
-    }
-
-    private void setHttpMethod(HttpURLConnection conn, String method) {
-        try {
-            conn.setRequestMethod(method);
-        } catch (java.net.ProtocolException e) {
-            try {
-                java.lang.reflect.Field methodField = HttpURLConnection.class.getDeclaredField("method");
-                methodField.setAccessible(true);
-                methodField.set(conn, method);
-            } catch (Exception ex) {
-                throw new RuntimeException("Failed to set HTTP method to " + method, ex);
-            }
-        }
+        return new SocketPatch(sslSocketFactory, hostnameVerifier, timeout, bearerToken).send(url, body, contentType);
     }
 
     private void requestStream(String method, String path, StreamCallback<String> callback) throws IOException {
