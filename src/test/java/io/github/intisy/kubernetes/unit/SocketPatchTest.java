@@ -12,12 +12,15 @@ import javax.net.ssl.SSLServerSocketFactory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.PrivateKey;
@@ -25,8 +28,12 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -155,16 +162,41 @@ class SocketPatchTest {
     }
 
     @Test
-    void httpsVerifyingClientDoesNotSilentlyAcceptAnUntrustedServerIdentity() throws Exception {
+    void httpsVerifyingClientRejectsACertificateThatDoesNotIdentifyTheHost() throws Exception {
         try (FakeServer server = new FakeServer(sslServerSocket())) {
             server.respondWith(cannedResponse(200, "OK", "application/json", "{}"));
             KubernetesHttpClient client = new KubernetesHttpClient(
                     "https://localhost:" + server.port(), null, fixture("tls-cert.pem"), TIMEOUT_MS, false);
 
             Throwable thrown = assertThrows(IOException.class, () -> client.patch("/api/v1/namespaces/demo", "{}"),
-                    "a verifying client must not silently accept a server whose identity does not match localhost");
+                    "a verifying client must not silently accept a certificate that does not identify localhost");
             assertTrue(thrown instanceof SSLException,
-                    "expected an SSLException from failed trust or hostname verification, got: " + thrown);
+                    "expected real JSSE endpoint identification (setEndpointIdentificationAlgorithm(\"HTTPS\")) to "
+                            + "reject this certificate during the handshake since it names neither localhost nor "
+                            + "127.0.0.1, got: " + thrown);
+        }
+    }
+
+    @Test
+    void httpsVerifyingClientSucceedsAgainstACertificateThatMatchesTheHost() throws Exception {
+        GeneratedTlsMaterial tls = sslServerSocketWithMatchingSan();
+        try (FakeServer server = new FakeServer(tls.serverSocket)) {
+            server.respondWith(cannedResponse(200, "OK", "application/json", "{\"status\":\"ok\"}"));
+            KubernetesHttpClient client = new KubernetesHttpClient(
+                    "https://localhost:" + server.port(), null, tls.certPem, TIMEOUT_MS, false);
+
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("fieldManager", "kubernetes-java");
+            KubernetesResponse response = client.patch("/api/v1/namespaces/demo", query,
+                    "{\"spec\":true}", "application/apply-patch+yaml");
+
+            String request = server.awaitRequest();
+            assertTrue(request.startsWith("PATCH /api/v1/namespaces/demo?fieldManager=kubernetes-java HTTP/1.1\r\n"),
+                    "expected the server to see PATCH once real endpoint identification accepts a matching "
+                            + "certificate; got: " + firstLine(request));
+            assertEquals("application/apply-patch+yaml", header(request, "Content-Type"));
+            assertEquals(200, response.getStatusCode());
+            assertEquals("{\"status\":\"ok\"}", response.getBody());
         }
     }
 
@@ -179,9 +211,11 @@ class SocketPatchTest {
 
             int firstByte = peerRead.get(10, TimeUnit.SECONDS);
             assertEquals(-1, firstByte,
-                    "expected the server to observe end-of-stream once the client's socket is closed after the "
-                            + "failed hostname verification; a leaked, never-closed socket would leave the server "
-                            + "blocked reading until its own read timeout instead");
+                    "expected the server to observe end-of-stream (or a connection abort, treated the same way, "
+                            + "since real JSSE endpoint identification can fail mid-handshake) once the client's "
+                            + "socket is closed after the failed hostname verification; a leaked, never-closed "
+                            + "socket would instead leave the server blocked until its own SocketTimeoutException, "
+                            + "which is not caught and would fail this test");
         }
     }
 
@@ -204,6 +238,96 @@ class SocketPatchTest {
 
         SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
         return (SSLServerSocket) factory.createServerSocket(0);
+    }
+
+    private static final class GeneratedTlsMaterial {
+        final SSLServerSocket serverSocket;
+        final String certPem;
+
+        GeneratedTlsMaterial(SSLServerSocket serverSocket, String certPem) {
+            this.serverSocket = serverSocket;
+            this.certPem = certPem;
+        }
+    }
+
+    /**
+     * @implNote The existing {@code tls-cert.pem} fixture has no subject alternative name, so it
+     * cannot exercise real JSSE endpoint identification succeeding. {@code keytool} ships with
+     * every JDK, so generating a throwaway keypair and self-signed certificate with a matching SAN
+     * through it, rather than via a new cryptography dependency or JDK-internal certificate
+     * classes, proves the positive case without either.
+     */
+    private static GeneratedTlsMaterial sslServerSocketWithMatchingSan() throws Exception {
+        Path keystoreFile = Files.createTempFile("socketpatch-keystore-", ".p12");
+        keystoreFile.toFile().deleteOnExit();
+        Files.delete(keystoreFile);
+        Path certFile = Files.createTempFile("socketpatch-cert-", ".pem");
+        certFile.toFile().deleteOnExit();
+
+        String alias = "kubernetes-java-test-san";
+        char[] password = "changeit".toCharArray();
+
+        runKeytool("-genkeypair", "-alias", alias, "-keyalg", "EC", "-keysize", "256",
+                "-sigalg", "SHA256withECDSA", "-dname", "CN=" + alias,
+                "-ext", "SAN=dns:localhost,ip:127.0.0.1",
+                "-validity", "2", "-storetype", "PKCS12",
+                "-keystore", keystoreFile.toString(), "-storepass", "changeit", "-keypass", "changeit");
+
+        runKeytool("-exportcert", "-alias", alias, "-rfc",
+                "-keystore", keystoreFile.toString(), "-storepass", "changeit",
+                "-file", certFile.toString());
+
+        String certPem = new String(Files.readAllBytes(certFile), StandardCharsets.UTF_8);
+
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(keystoreFile)) {
+            keyStore.load(in, password);
+        }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, password);
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), null, null);
+
+        SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
+        SSLServerSocket serverSocket = (SSLServerSocket) factory.createServerSocket(0);
+        return new GeneratedTlsMaterial(serverSocket, certPem);
+    }
+
+    private static void runKeytool(String... args) throws Exception {
+        List<String> command = new ArrayList<String>();
+        command.add(keytoolPath());
+        command.addAll(Arrays.asList(args));
+
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        String output = drain(process.getInputStream());
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new IllegalStateException("keytool timed out; output so far: " + output);
+        }
+        if (process.exitValue() != 0) {
+            throw new IllegalStateException("keytool exited with " + process.exitValue() + ": " + output);
+        }
+    }
+
+    private static String drain(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = in.read(buffer)) != -1) {
+            out.write(buffer, 0, read);
+        }
+        return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private static String keytoolPath() {
+        String javaHome = System.getProperty("java.home");
+        boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
+        return javaHome + File.separator + "bin" + File.separator + (windows ? "keytool.exe" : "keytool");
     }
 
     private static X509Certificate parseCertificate(String pem) throws Exception {
@@ -308,7 +432,11 @@ class SocketPatchTest {
                 public Integer call() throws Exception {
                     try (Socket socket = serverSocket.accept()) {
                         socket.setSoTimeout(8000);
-                        return socket.getInputStream().read();
+                        try {
+                            return socket.getInputStream().read();
+                        } catch (java.net.SocketException e) {
+                            return -1;
+                        }
                     }
                 }
             });

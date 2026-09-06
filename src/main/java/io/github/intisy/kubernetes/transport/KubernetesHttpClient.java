@@ -312,7 +312,7 @@ public class KubernetesHttpClient implements Closeable {
     private KubernetesResponse patchRequest(String path, String body, String contentType) throws IOException {
         log.trace("PATCH {}", path);
         URL url = new URL(apiServerUrl + path);
-        return new SocketPatch(sslSocketFactory, hostnameVerifier, timeout, bearerToken).send(url, body, contentType);
+        return new SocketPatch(sslSocketFactory, verifyHostname, timeout, bearerToken).send(url, body, contentType);
     }
 
     private void requestStream(String method, String path, StreamCallback<String> callback) throws IOException {
