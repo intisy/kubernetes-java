@@ -215,6 +215,10 @@ public class KubernetesClient implements Closeable {
         return new LogsPodCmd(httpClient, podName);
     }
 
+    public SweepPodsCmd sweepPods() {
+        return new SweepPodsCmd(httpClient);
+    }
+
 
     public ListDeploymentsCmd listDeployments() {
         return new ListDeploymentsCmd(httpClient);
