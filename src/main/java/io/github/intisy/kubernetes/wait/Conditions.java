@@ -60,6 +60,13 @@ public final class Conditions {
      * ({@code status.replicas} above the target means a surge pod is still being replaced). Without
      * them a rolling update reads complete the moment the OLD pods happen to satisfy the ready
      * count.
+     * @implNote a DaemonSet needs {@code updatedNumberScheduled} for exactly the same reason, and
+     * the omission was measured rather than reasoned about: on a two node site a core rollout
+     * reported complete while both pods were still the previous revision, because the controller
+     * had observed the new generation and the OLD pods were both ready. A DaemonSet replaces pods
+     * one node at a time, so {@code numberReady == desiredNumberScheduled} holds continuously
+     * throughout a rollout and cannot distinguish one that has finished from one that has not
+     * begun.
      */
     public static boolean isRolloutComplete(String statusJson) {
         JsonObject root = parse(statusJson);
@@ -73,8 +80,15 @@ public final class Conditions {
             return false;
         }
         if (status.has("desiredNumberScheduled") || status.has("numberReady")) {
-            return status.has("desiredNumberScheduled")
-                    && longAt(status, "numberReady") >= longAt(status, "desiredNumberScheduled");
+            if (!status.has("desiredNumberScheduled")) {
+                return false;
+            }
+            long scheduled = longAt(status, "desiredNumberScheduled");
+            if (status.has("updatedNumberScheduled")
+                    && longAt(status, "updatedNumberScheduled") < scheduled) {
+                return false;
+            }
+            return longAt(status, "numberReady") >= scheduled;
         }
         JsonObject spec = objectAt(root, "spec");
         if (spec != null && spec.has("replicas")) {
