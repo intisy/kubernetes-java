@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  * The base directory for storing Kubernetes data can be configured using {@link #setBaseDirectory(Path)}
  * before creating any providers. By default, it uses {@code ~/.kubernetes-java/}.
  * <p>
- * Providers automatically register a JVM shutdown hook to clean up running clusters on exit.
+ * Stopping a started provider on JVM exit is the application's job, through {@link #stopAll()}.
  * On startup, orphaned Minikube profiles from crashed JVMs are detected and removed.
  *
  * @author Finn Birich
@@ -38,15 +38,13 @@ public abstract class KubernetesProvider {
 
     /**
      * Tracks all active (started) provider instances in this JVM.
-     * Used by the shutdown hook to clean up all providers on exit.
+     * Used by {@link #stopAll()} to stop every provider this JVM started.
      */
     private static final Set<KubernetesProvider> activeProviders =
             Collections.synchronizedSet(new LinkedHashSet<KubernetesProvider>());
 
-    private static volatile boolean shutdownHookRegistered = false;
-
     /**
-     * Instance lock file handle — kept open to hold the file lock for orphan detection.
+     * Instance lock file handle, kept open to hold the file lock for orphan detection.
      * When the JVM exits (even on crash/kill), the OS releases the lock automatically.
      */
     private RandomAccessFile lockFileRaf;
@@ -149,40 +147,42 @@ public abstract class KubernetesProvider {
     public abstract void ensureInstalled() throws IOException;
 
     /**
-     * Register this provider as active and ensure the JVM shutdown hook is installed.
-     * <p>
-     * The shutdown hook guarantees that {@link #stop()} is called on all active providers
-     * when the JVM exits — whether via normal exit, {@code System.exit()}, or Ctrl+C (SIGTERM).
+     * Register this provider as active, so that {@link #stopAll()} can stop it.
      * <p>
      * Call this at the end of {@code start()} in each provider, after the cluster is confirmed ready.
      */
     protected void registerInstance() {
-        synchronized (KubernetesProvider.class) {
-            if (!shutdownHookRegistered) {
-                Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        int count = activeProviders.size();
-                        if (count > 0) {
-                            log.info("JVM shutdown detected, cleaning up {} active Kubernetes provider(s)...", count);
-                            List<KubernetesProvider> toStop = new ArrayList<KubernetesProvider>(activeProviders);
-                            for (KubernetesProvider provider : toStop) {
-                                try {
-                                    provider.stop();
-                                } catch (Exception e) {
-                                    log.warn("Failed to stop provider {} during shutdown: {}",
-                                            provider.getInstanceId(), e.getMessage());
-                                }
-                            }
-                        }
-                    }
-                }, "kubernetes-java-shutdown-hook"));
-                shutdownHookRegistered = true;
-                log.debug("Registered JVM shutdown hook for Kubernetes provider cleanup");
-            }
-        }
         activeProviders.add(this);
         log.debug("Registered provider instance: {}", getInstanceId());
+    }
+
+    /**
+     * Stop every provider this JVM started and has not stopped yet.
+     *
+     * @implNote this library installs no shutdown hook of its own, and an application that wants a
+     * started cluster released on exit registers this method with whatever it already uses to run
+     * cleanups. Independent shutdown hooks in one JVM run in undefined order relative to each
+     * other, so a library that installs its own can kill a process another library is still talking
+     * to, and the resulting failure depends on thread scheduling.
+     * @implNote guarded per provider rather than around the loop, because the point of stopping all
+     * of them is that one cluster refusing to stop still leaves the others released.
+     */
+    public static void stopAll() {
+        List<KubernetesProvider> toStop;
+        synchronized (activeProviders) {
+            toStop = new ArrayList<KubernetesProvider>(activeProviders);
+        }
+        if (toStop.isEmpty()) {
+            return;
+        }
+        log.info("Stopping {} active Kubernetes provider(s)...", toStop.size());
+        for (KubernetesProvider provider : toStop) {
+            try {
+                provider.stop();
+            } catch (Exception failure) {
+                log.warn("Failed to stop provider {}: {}", provider.getInstanceId(), failure.getMessage());
+            }
+        }
     }
 
     /**
@@ -392,7 +392,7 @@ public abstract class KubernetesProvider {
                             try {
                                 Files.deleteIfExists(path);
                             } catch (IOException e) {
-                                // best effort — file may be locked on Windows
+                                // best effort, file may be locked on Windows
                             }
                         });
             } finally {
