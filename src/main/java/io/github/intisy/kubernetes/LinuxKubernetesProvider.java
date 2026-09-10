@@ -16,7 +16,7 @@ import static io.github.intisy.kubernetes.IOUtils.readAllBytes;
 
 /**
  * Linux-specific Kubernetes provider using Minikube.
- * Self-contained — does NOT require Docker Desktop.
+ * Self-contained - does NOT require Docker Desktop.
  * <p>
  * Uses docker-java's {@link DockerProvider} to bootstrap a self-contained
  * Docker Engine (rootless when not root, direct when root), then runs

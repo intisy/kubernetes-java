@@ -18,7 +18,7 @@ import static io.github.intisy.kubernetes.IOUtils.readAllBytes;
 
 /**
  * Windows-specific Kubernetes provider using Minikube.
- * Self-contained — does NOT require Docker Desktop.
+ * Self-contained - does NOT require Docker Desktop.
  * <p>
  * When running as administrator with Hyper-V enabled: Uses Hyper-V driver directly.
  * Otherwise: Uses docker-java's {@link DockerProvider} to bootstrap a self-contained
