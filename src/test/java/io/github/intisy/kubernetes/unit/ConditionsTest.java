@@ -52,6 +52,31 @@ class ConditionsTest {
                 + "\"status\":{\"observedGeneration\":1,\"replicas\":3,\"readyReplicas\":2}}"));
     }
 
+    /**
+     * The case a two node core rollout actually hit: the generation is observed and every pod is
+     * ready, but not one of them has been replaced yet.
+     */
+    @Test
+    void daemonSetRolloutIncompleteWhileNoPodIsOnTheNewRevision() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":5},"
+                + "\"status\":{\"observedGeneration\":5,\"desiredNumberScheduled\":2,"
+                + "\"numberReady\":2,\"updatedNumberScheduled\":0}}"));
+    }
+
+    @Test
+    void daemonSetRolloutIncompleteWhileOnlySomePodsAreOnTheNewRevision() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":5},"
+                + "\"status\":{\"observedGeneration\":5,\"desiredNumberScheduled\":2,"
+                + "\"numberReady\":2,\"updatedNumberScheduled\":1}}"));
+    }
+
+    @Test
+    void daemonSetRolloutCompleteOnceEveryPodIsOnTheNewRevisionAndReady() {
+        assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":5},"
+                + "\"status\":{\"observedGeneration\":5,\"desiredNumberScheduled\":2,"
+                + "\"numberReady\":2,\"updatedNumberScheduled\":2}}"));
+    }
+
     @Test
     void daemonSetRolloutUsesTheScheduledAndReadyCounts() {
         assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
