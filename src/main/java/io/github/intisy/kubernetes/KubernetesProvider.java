@@ -5,12 +5,16 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -374,6 +378,38 @@ public abstract class KubernetesProvider {
             }
         } catch (IOException | InterruptedException e) {
             log.warn("Error deleting orphaned profile {}: {}", profileName, e.getMessage());
+        }
+    }
+
+    /**
+     * Downloads {@code urlString} to {@code destinationPath}, replacing whatever is already there.
+     * This is how each provider fetches the Minikube and kubectl binaries it needs.
+     *
+     * @param urlString the URL to read
+     * @param destinationPath the file to write
+     * @throws IOException if the connection fails, or the server answers 400 or above
+     * @implNote {@code protected static} rather than public: the three platform providers are the
+     * only callers, and each carried a byte identical private copy of this body until they were
+     * folded onto this one. Redirects are followed because the published Minikube and kubectl
+     * download URLs redirect to a CDN, so a provider that did not follow them would write the
+     * redirect page to disk and call it a binary.
+     */
+    @SuppressWarnings("deprecation")
+    protected static void downloadFile(String urlString, Path destinationPath) throws IOException {
+        log.debug("Downloading {} to {}", urlString, destinationPath);
+        URL url = new URL(urlString);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestMethod("GET");
+        connection.connect();
+
+        int responseCode = connection.getResponseCode();
+        if (responseCode >= 400) {
+            throw new IOException("Failed to download file: " + responseCode);
+        }
+
+        try (InputStream in = connection.getInputStream()) {
+            Files.copy(in, destinationPath, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

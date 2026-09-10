@@ -67,6 +67,15 @@ public final class Conditions {
      * one node at a time, so {@code numberReady == desiredNumberScheduled} holds continuously
      * throughout a rollout and cannot distinguish one that has finished from one that has not
      * begun.
+     * @implNote the two progress counters are read by VALUE, and are the deliberate exception to
+     * the key-presence rule above, because both are {@code omitempty}: the API omits them at
+     * {@code 0}, which is precisely "no pod is on the new revision yet" and the strongest evidence
+     * a rollout has not begun. Guarding them with a presence check therefore skipped the check in
+     * the only case it was written for. Measured on a single node site 2026-09-11: the document
+     * {@code {generation:7, observedGeneration:7, desiredNumberScheduled:1, numberReady:1}} with
+     * {@code updatedNumberScheduled} absent read as complete 4 ms after the apply, 14 s before the
+     * replacement pod was ready. An absent counter is 0, never "not applicable"; a settled
+     * workload with a nonzero target always reports it.
      */
     public static boolean isRolloutComplete(String statusJson) {
         JsonObject root = parse(statusJson);
@@ -84,8 +93,7 @@ public final class Conditions {
                 return false;
             }
             long scheduled = longAt(status, "desiredNumberScheduled");
-            if (status.has("updatedNumberScheduled")
-                    && longAt(status, "updatedNumberScheduled") < scheduled) {
+            if (longAt(status, "updatedNumberScheduled") < scheduled) {
                 return false;
             }
             return longAt(status, "numberReady") >= scheduled;
@@ -93,7 +101,7 @@ public final class Conditions {
         JsonObject spec = objectAt(root, "spec");
         if (spec != null && spec.has("replicas")) {
             long target = longAt(spec, "replicas");
-            if (status.has("updatedReplicas") && longAt(status, "updatedReplicas") < target) {
+            if (longAt(status, "updatedReplicas") < target) {
                 return false;
             }
             if (status.has("replicas") && longAt(status, "replicas") > target) {

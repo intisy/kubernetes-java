@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for orphan cleanup and instance lock management in KubernetesProvider.
- * No Docker/Minikube required — uses temp directories.
+ * No Docker/Minikube required - uses temp directories.
  *
  * @author Finn Birich
  */
@@ -46,7 +46,7 @@ public class OrphanCleanupTest {
         boolean acquired = provider.doAcquireInstanceLock(instanceDir, "test-profile");
         assertTrue(acquired, "Lock should be acquired successfully");
 
-        // Release the lock first — on Windows, file locks are mandatory
+        // Release the lock first - on Windows, file locks are mandatory
         provider.doReleaseInstanceLock();
 
         Path lockFile = instanceDir.resolve("instance.lock");

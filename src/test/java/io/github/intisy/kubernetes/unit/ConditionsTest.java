@@ -80,11 +80,34 @@ class ConditionsTest {
     @Test
     void daemonSetRolloutUsesTheScheduledAndReadyCounts() {
         assertTrue(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
-                + "\"status\":{\"observedGeneration\":1,"
-                + "\"desiredNumberScheduled\":1,\"numberReady\":1}}"));
+                + "\"status\":{\"observedGeneration\":1,\"desiredNumberScheduled\":1,"
+                + "\"numberReady\":1,\"updatedNumberScheduled\":1}}"));
         assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":1},"
-                + "\"status\":{\"observedGeneration\":1,"
-                + "\"desiredNumberScheduled\":1,\"numberReady\":0}}"));
+                + "\"status\":{\"observedGeneration\":1,\"desiredNumberScheduled\":1,"
+                + "\"numberReady\":0,\"updatedNumberScheduled\":1}}"));
+    }
+
+    /**
+     * The document a single node DaemonSet publishes in the instant after its pod template changes,
+     * captured verbatim from a live site. {@code updatedNumberScheduled} is {@code omitempty}, so at
+     * zero it is absent rather than present as {@code 0}, and {@code numberReady} still counts the
+     * pod of the OLD revision.
+     */
+    @Test
+    void daemonSetRolloutIncompleteWhenTheUpdatedCountIsOmittedBecauseItIsZero() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":7},"
+                + "\"status\":{\"observedGeneration\":7,\"desiredNumberScheduled\":1,"
+                + "\"numberReady\":1}}"));
+    }
+
+    /**
+     * The same omission on the replica side, which reaches Deployments and StatefulSets.
+     */
+    @Test
+    void rolloutIncompleteWhenTheUpdatedReplicaCountIsOmittedBecauseItIsZero() {
+        assertFalse(Conditions.isRolloutComplete("{\"metadata\":{\"generation\":2},"
+                + "\"spec\":{\"replicas\":2},"
+                + "\"status\":{\"observedGeneration\":2,\"replicas\":2,\"readyReplicas\":2}}"));
     }
 
     @Test
