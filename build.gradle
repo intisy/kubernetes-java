@@ -84,9 +84,10 @@ java {
     targetCompatibility = JavaVersion.VERSION_1_8
 }
 
-// Without this javac reads sources in the platform default, which is Cp1252 on a Windows
-// workstation and UTF-8 on the CI runner, so one non-ASCII character compiles to different bytes in
-// the two places and only a test that measures a length notices.
+// javac leaves the source encoding unset, so it follows whatever the build JVM reports, and that
+// is not reliably anything: measured on one Windows box with JDK 17, Gradle 8.11.1 read these
+// sources as Cp1252 while 7.6.4 read them as UTF-8. Pinning it makes the compiled bytes the same
+// everywhere rather than a property of the build that ran.
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 
 /**
